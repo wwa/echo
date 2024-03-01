@@ -43,7 +43,7 @@ Subordinate functions include:
 - security with model-graded [evals](https://github.com/openai/evals/blob/main/docs/build-eval.md)
 
 # Issues
-OpenAI Assistants API [beta](https://platform.openai.com/docs/api-reference/assistants) is *very beta*. Hit-or-miss; expensive - consumes a ton of tokens; and, periodically, you need to go in there and clean out old threads and files. I'm hoping it'll improve, or eventually I'll just build my own RAG from scratch.
+OpenAI Assistants API [beta](https://platform.openai.com/docs/api-reference/assistants) is *very beta*. Hit-or-miss reliabilty of file retrievals; expensive - consumes a ton of tokens; and, periodically, you need to go in there and clean out old threads and files. I'm hoping it'll improve, or eventually I'll just build my own RAG from scratch.
 
 # Security
 Prompt injections and jailbreaks are easy (here's mine: [FIMjector](https://github.com/wwa/FIMjector)) and the only reason they're not common on the Internet is slow adoption. 
