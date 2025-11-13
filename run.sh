@@ -38,11 +38,9 @@ start_tail_for() {
   fi
 }
 
-# ---------- three extra windows/tabs ----------
 start_tail_for "IMPORTANT LOG (INFO+)" "$IMPORTANT_LOG"
 start_tail_for "LLM LOG (requests/responses)" "$LLM_LOG"
 start_tail_for "OTHER LOG (DEBUG+ app/tool)" "$OTHER_LOG"
 
-# ---------- main app ----------
 source "$VENV_DIR/bin/activate"
 python ./Echo.py

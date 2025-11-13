@@ -38,49 +38,50 @@ def estimate_tokens_from_messages(messages):
     return int(total_chars / 3.5)
 
 def modelOne(toolkit, messages):
-  logger = logging.getLogger("echo.llm")
-  ts_s = timer()
+    logger = logging.getLogger("echo.llm")
+    ts_s = timer()
 
-  # Log request
-  try:
-    logger.info("LLM Request: model=%s", toolkit.openai_chat_model)
-    logger.debug("LLM Request Messages: %s", json.dumps(messages, indent=2, ensure_ascii=False))
-    logger.debug("LLM Tools Spec: %s", json.dumps(toolkit.toolMessage(), indent=2, ensure_ascii=False))
-  except Exception:
-    logger.exception("Failed logging LLM request")
-    traceback.print_exc()
-  print("Prompting...")
+    # Log request
+    try:
+        logger.info("LLM Request: model=%s", toolkit.openai_chat_model)
+        logger.debug("LLM Request Messages: %s", json.dumps(messages, indent=2, ensure_ascii=False))
+        logger.debug("LLM Tools Spec: %s", json.dumps(toolkit.toolMessage(), indent=2, ensure_ascii=False))
+    except Exception:
+        logger.exception("Failed logging LLM request")
+        traceback.print_exc()
+    print("Prompting...")
 
-  res = toolkit.openai.chat.completions.create(
-    model=toolkit.openai_chat_model,
-    messages=messages,
-    tools=toolkit.toolMessage(),
-    tool_choice="auto"
-  )
+    res = toolkit.openai.chat.completions.create(
+        model    = toolkit.openai_chat_model,
+        messages = messages,
+        tools    = toolkit.toolMessage(),
+        tool_choice = "auto"
+    )
 
-  ts_e = timer()
-  print(f"... took {ts_e - ts_s}s")
+    ts_e = timer()
+    print(f"... took {ts_e-ts_s}s")
 
-  # Log response
-  try:
-    logger.info("LLM Response received.")
-    logger.debug("LLM Raw Response JSON: %s", res.model_dump_json(indent=2))
-  except Exception:
-    logger.exception("Failed logging LLM response")
-    traceback.print_exc()
+    # Log response
+    try:
+        logger.info("LLM Response received.")
+        logger.debug("LLM Raw Response JSON: %s", res.model_dump_json(indent=2))
+    except Exception:
+        logger.exception("Failed logging LLM response")
+        traceback.print_exc()
+    reason  = res.choices[0].finish_reason
+    message = res.choices[0].message
 
-  reason  = res.choices[0].finish_reason
-  message = res.choices[0].message
-  if reason == "stop":
-    messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'tool_calls'})))
-    return reason, message.content, messages
-  if reason == "tool_calls":
-    messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'content'})))
-    for tc in message.tool_calls:
-      if tc.type == "function":
-        messages.append(toolkit.call(tc.id, tc.function))
+    if reason == "stop":
+        messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'tool_calls'})))
+        return reason, message.content, messages
 
-  return reason, None, messages
+    if reason == "tool_calls":
+        messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'content'})))
+        for tc in message.tool_calls:
+            if tc.type == "function":
+                messages.append(toolkit.call(tc.id, tc.function))
+
+    return reason, None, messages
 
 def modelLoop(toolkit, history=[]):
   # Determine which history messages will be used
@@ -224,7 +225,7 @@ if __name__ == "__main__":
     LOG_DIR = "logs"
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    # ---------- root logger: no handlers, just level ----------
+    # root logger
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
     root.handlers.clear()
@@ -232,35 +233,34 @@ if __name__ == "__main__":
     log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     formatter = logging.Formatter(log_format)
 
-    # ---------- handlers ----------
+    # handlers
     important_handler = logging.FileHandler(os.path.join(LOG_DIR, "important.log"))
-    important_handler.setLevel(logging.INFO)         # only INFO+ go here
+    important_handler.setLevel(logging.INFO)
     important_handler.setFormatter(formatter)
 
     other_handler = logging.FileHandler(os.path.join(LOG_DIR, "other.log"))
-    other_handler.setLevel(logging.DEBUG)            # all app/tool DEBUG+ here
+    other_handler.setLevel(logging.DEBUG)
     other_handler.setFormatter(formatter)
 
     llm_handler = logging.FileHandler(os.path.join(LOG_DIR, "llm.log"))
-    llm_handler.setLevel(logging.DEBUG)              # all LLM traffic here
+    llm_handler.setLevel(logging.DEBUG)
     llm_handler.setFormatter(formatter)
 
-    # ---------- general logger: echo.* (app + toolkit) ----------
+    # echo.* logger (app + toolkit)
     echo_logger = logging.getLogger("echo")
     echo_logger.setLevel(logging.DEBUG)
     echo_logger.handlers.clear()
-    echo_logger.addHandler(important_handler)        # INFO+ subset
-    echo_logger.addHandler(other_handler)            # everything
-    echo_logger.propagate = False                    # don't bubble to root
+    echo_logger.addHandler(important_handler)   # important.log  (INFO+)
+    echo_logger.addHandler(other_handler)       # other.log      (DEBUG+)
+    echo_logger.propagate = False
 
-    # ---------- LLM logger: echo.llm ----------
+    # echo.llm logger (LLM traffic)
     llm_logger = logging.getLogger("echo.llm")
     llm_logger.setLevel(logging.DEBUG)
     llm_logger.handlers.clear()
-    llm_logger.addHandler(llm_handler)               # only goes to llm.log
-    llm_logger.propagate = False                     # do NOT go to echo/other
+    llm_logger.addHandler(llm_handler)          # llm.log (DEBUG+)
+    llm_logger.propagate = False
 
-    # You can still get a generic app logger if you want:
     logger = logging.getLogger("echo")
     logger.info("Starting ECHO...")
 
