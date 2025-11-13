@@ -9,6 +9,8 @@ cd "$SCRIPT_DIR"
 
 mkdir -p "$LOG_DIR"
 
+SHOW_EXTRA_WINDOWS="${SHOW_EXTRA_WINDOWS:-true}"
+
 IMPORTANT_LOG="$LOG_DIR/important.log"
 LLM_LOG="$LOG_DIR/llm.log"
 OTHER_LOG="$LOG_DIR/other.log"
@@ -38,9 +40,19 @@ start_tail_for() {
   fi
 }
 
-start_tail_for "IMPORTANT LOG (INFO+)" "$IMPORTANT_LOG"
-start_tail_for "LLM LOG (requests/responses)" "$LLM_LOG"
-start_tail_for "OTHER LOG (DEBUG+ app/tool)" "$OTHER_LOG"
+# ---------------------------------------------------
+# START EXTRA WINDOWS (if enabled)
+# ---------------------------------------------------
+if [ "$SHOW_EXTRA_WINDOWS" = "true" ]; then
+  start_tail_for "IMPORTANT LOG (INFO+)" "$IMPORTANT_LOG"
+  start_tail_for "LLM LOG (requests/responses)" "$LLM_LOG"
+  start_tail_for "OTHER LOG (DEBUG+ app/tool)" "$OTHER_LOG"
+else
+  echo "Extra windows disabled. Logs only saved to file."
+fi
 
+# ---------------------------------------------------
+# MAIN APP
+# ---------------------------------------------------
 source "$VENV_DIR/bin/activate"
 python ./Echo.py
