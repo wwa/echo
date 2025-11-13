@@ -8,6 +8,34 @@ from dotenv import load_dotenv
 #Own
 from Toolkit import BaseToolkit
 
+MODEL_CONTEXT_LIMITS = {
+    "gpt-4-turbo-preview": 128000,
+    "gpt-4.1": 128000,
+    "gpt-4.1-mini": 128000,
+    "gpt-4.1-small": 128000,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "gpt-4o-mini-transcribe": 16000,
+    "gpt-5-mini": 400000,
+    "gpt-5": 400000,
+    "gpt-5.1": 400000,
+}
+
+def estimate_tokens_from_messages(messages):
+    total_chars = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            total_chars += len(content)
+        elif content is not None:
+            # e.g. list for vision, or other structures
+            try:
+                total_chars += len(str(content))
+            except Exception:
+                pass
+    return int(total_chars / 3.5)
 
 def modelOne(toolkit, messages):
   logger = logging.getLogger("echo.llm")
@@ -51,15 +79,41 @@ def modelOne(toolkit, messages):
     for tc in message.tool_calls:
       if tc.type == "function":
         messages.append(toolkit.call(tc.id, tc.function))
+
   return reason, None, messages
 
 def modelLoop(toolkit, history=[]):
-  # Decide whether to include previous turns
+  # Determine which history messages will be used
   if getattr(toolkit, "chain_enabled", True):
     history_messages = sum(history, [])
   else:
     history_messages = []
 
+  # ----------------------------------------------------------
+  # Context window WARNING based on HISTORY ONLY
+  # ----------------------------------------------------------
+  if getattr(toolkit, "chain_enabled", True) and history_messages:
+    try:
+      used_tokens = estimate_tokens_from_messages(history_messages)
+      max_tokens = MODEL_CONTEXT_LIMITS.get(toolkit.openai_chat_model, 128000)
+      threshold = int(max_tokens * CONTEXT_WARN_THRESHOLD)
+
+      if used_tokens >= threshold:
+        percent = (used_tokens / max_tokens) * 100
+        print(
+          f"⚠️  WARNING: Conversation history uses ~{used_tokens}/{max_tokens} tokens "
+          f"({percent:.1f}% of context window)."
+        )
+        print("⚠️  Consider 'clear', 'reset', or 'chain off' to avoid running out of context.\n")
+
+        logging.getLogger("echo.context").warning(
+          "History token usage: %s/%s (%.1f%%)",
+          used_tokens, max_tokens, percent
+        )
+    except Exception:
+      logging.getLogger("echo.context").exception("Failed to estimate history token usage")
+
+  # Now build the full messages for this turn
   messages = [{
     "role": "system",
     "content": f"""
@@ -69,9 +123,9 @@ def modelLoop(toolkit, history=[]):
       A demonstrative pronoun such as this/that/these/it likely refers to something in conversation history, or data copied to cliboard or something that user sees on his screen.
       Regardless of action taken, respond in JSON with {{plan:<plan>,response:<text response>}}
     """ + toolkit.toolPrompt()
-    }] + history_messages + [
-      {"role":"user", "content":toolkit.userPrompt()}
-    ] + toolkit.fake('listTools') + toolkit.fake('clipboardRead')
+  }] + history_messages + [
+    {"role": "user", "content": toolkit.userPrompt()}
+  ] + toolkit.fake('listTools') + toolkit.fake('clipboardRead')
 
   content = None
   while True:
@@ -138,7 +192,7 @@ def mainLoop(toolkit, limit=10):
     "Type 'history' to see conversation history. \n"
     "Type 'clear' to clear history. \n"
     "Type 'reset' to reset all tools. \n\n"
-    "Type 'chain on/off' to enable or disable conversation history chaining. \n\n"
+    "Type 'chain on/off' to enable or disable conversation history chaining. \n"
     "Type 'log LEVEL' to change log verbose lvl. \n\n"
     "Type 'exit' to quit if you need rest. \n\n")
 
@@ -209,6 +263,15 @@ if __name__ == "__main__":
     # You can still get a generic app logger if you want:
     logger = logging.getLogger("echo")
     logger.info("Starting ECHO...")
+
+    try:
+        CONTEXT_WARN_THRESHOLD = float(os.getenv("CONTEXT_WARN_THRESHOLD", "0.90"))
+        if not (0 < CONTEXT_WARN_THRESHOLD < 1):
+            print("⚠️  Invalid CONTEXT_WARN_THRESHOLD in .env, using default 0.90")
+            CONTEXT_WARN_THRESHOLD = 0.90
+    except:
+        print("⚠️  Failed to parse CONTEXT_WARN_THRESHOLD, using default 0.90")
+        CONTEXT_WARN_THRESHOLD = 0.90
 
     # ---------------------------------------
     # Start toolkit
