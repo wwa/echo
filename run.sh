@@ -9,36 +9,40 @@ cd "$SCRIPT_DIR"
 
 mkdir -p "$LOG_DIR"
 
-LOG_FILE="$LOG_DIR/echo.log"
+IMPORTANT_LOG="$LOG_DIR/important.log"
+LLM_LOG="$LOG_DIR/llm.log"
+OTHER_LOG="$LOG_DIR/other.log"
 
-start_tail_tab() {
-  # Try gnome-terminal in a new tab
+start_tail_for() {
+  local title="$1"
+  local file="$2"
+
   if command -v gnome-terminal >/dev/null 2>&1; then
     (
-      gnome-terminal --tab -- bash -lc "echo 'Tailing $LOG_FILE'; tail -f \"$LOG_FILE\"; exec bash"
-    ) & disown || echo "⚠️ Failed to open gnome-terminal tab for tail."
+      gnome-terminal --tab -- bash -lc "echo '$title'; echo 'Tailing $file'; tail -f \"$file\"; exec bash"
+    ) & disown || echo "⚠️ Failed to open gnome-terminal tab for $title."
 
-  # Try konsole in a new tab
   elif command -v konsole >/dev/null 2>&1; then
     (
-      konsole --new-tab -e bash -c "echo 'Tailing $LOG_FILE'; tail -f \"$LOG_FILE\"; exec bash"
-    ) & disown || echo "⚠️ Failed to open konsole tab for tail."
+      konsole --new-tab -e bash -c "echo '$title'; echo 'Tailing $file'; tail -f \"$file\"; exec bash"
+    ) & disown || echo "⚠️ Failed to open konsole tab for $title."
 
-  # Fallback: x-terminal-emulator (may open a new window, not a tab)
   elif command -v x-terminal-emulator >/dev/null 2>&1; then
     (
-      x-terminal-emulator -e bash -lc "echo Tailing $LOG_FILE; tail -f \"$LOG_FILE\"; exec bash"
-    ) & disown || echo "⚠️ Failed to open x-terminal-emulator for tail."
+      x-terminal-emulator -e bash -lc "echo '$title'; echo 'Tailing $file'; tail -f \"$file\"; exec bash"
+    ) & disown || echo "⚠️ Failed to open x-terminal-emulator for $title."
 
   else
-    echo "⚠️ Could not auto-open a terminal tab. Run this manually in another shell:"
-    echo "    tail -f $LOG_FILE"
+    echo "⚠️ Could not auto-open a terminal tab for '$title'. Run manually:"
+    echo "    tail -f $file"
   fi
 }
 
-# Start tail in another tab/window, but don't block this script
-start_tail_tab
+# ---------- three extra windows/tabs ----------
+start_tail_for "IMPORTANT LOG (INFO+)" "$IMPORTANT_LOG"
+start_tail_for "LLM LOG (requests/responses)" "$LLM_LOG"
+start_tail_for "OTHER LOG (DEBUG+ app/tool)" "$OTHER_LOG"
 
-# Now always start the venv + app in THIS console immediately
+# ---------- main app ----------
 source "$VENV_DIR/bin/activate"
 python ./Echo.py

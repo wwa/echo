@@ -8,32 +8,39 @@ from dotenv import load_dotenv
 #Own
 from Toolkit import BaseToolkit
 
-def modelOne(toolkit, messages):
-  ts_s = timer()
-  logger = logging.getLogger("echo.modelOne.LLM")
 
+def modelOne(toolkit, messages):
+  logger = logging.getLogger("echo.llm")
+  ts_s = timer()
+
+  # Log request
   try:
     logger.info("LLM Request: model=%s", toolkit.openai_chat_model)
     logger.debug("LLM Request Messages: %s", json.dumps(messages, indent=2, ensure_ascii=False))
     logger.debug("LLM Tools Spec: %s", json.dumps(toolkit.toolMessage(), indent=2, ensure_ascii=False))
   except Exception:
-    logger.exception("Failed to log LLM request.")
+    logger.exception("Failed logging LLM request")
     traceback.print_exc()
   print("Prompting...")
+
   res = toolkit.openai.chat.completions.create(
-    model    = toolkit.openai_chat_model,
-    messages = messages,
-    tools    = toolkit.toolMessage(),
-    tool_choice = "auto"
+    model=toolkit.openai_chat_model,
+    messages=messages,
+    tools=toolkit.toolMessage(),
+    tool_choice="auto"
   )
+
   ts_e = timer()
-  print(f"... took {ts_e-ts_s}s")
+  print(f"... took {ts_e - ts_s}s")
+
+  # Log response
   try:
     logger.info("LLM Response received.")
     logger.debug("LLM Raw Response JSON: %s", res.model_dump_json(indent=2))
   except Exception:
-    logger.exception("Failed to log LLM response.")
+    logger.exception("Failed logging LLM response")
     traceback.print_exc()
+
   reason  = res.choices[0].finish_reason
   message = res.choices[0].message
   if reason == "stop":
@@ -136,34 +143,56 @@ def mainLoop(toolkit, limit=10):
       pass
 
 if __name__ == "__main__":
-  LOG_DIR = "logs"
-  os.makedirs(LOG_DIR, exist_ok=True)
+    LOG_DIR = "logs"
+    os.makedirs(LOG_DIR, exist_ok=True)
 
-  load_dotenv()
+    # ---------- root logger: no handlers, just level ----------
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    root.handlers.clear()
 
-  log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
-  print(log_level_name)
-  log_level = getattr(logging, log_level_name, logging.INFO)
+    log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    formatter = logging.Formatter(log_format)
 
-  logging.basicConfig(
-    level=log_level,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-      logging.FileHandler(os.path.join(LOG_DIR, "echo.log")),
-      #logging.StreamHandler()
-    ]
-  )
+    # ---------- handlers ----------
+    important_handler = logging.FileHandler(os.path.join(LOG_DIR, "important.log"))
+    important_handler.setLevel(logging.INFO)         # only INFO+ go here
+    important_handler.setFormatter(formatter)
 
-  logger = logging.getLogger("echo")
-  logger.info("Starting ECHO...")
+    other_handler = logging.FileHandler(os.path.join(LOG_DIR, "other.log"))
+    other_handler.setLevel(logging.DEBUG)            # all app/tool DEBUG+ here
+    other_handler.setFormatter(formatter)
 
-  # ---------------------------------------
-  # Start toolkit
-  # ---------------------------------------
-  toolkit = BaseToolkit()
-  if not toolkit.openai:
-    raise Exception('OpenAI API not initialized')
-  # Turn audio off for console I/O:
-  # toolkit.toggleTool('listen','disabled')
-  # toolkit.toggleTool('speak','disabled')
-  mainLoop(toolkit)
+    llm_handler = logging.FileHandler(os.path.join(LOG_DIR, "llm.log"))
+    llm_handler.setLevel(logging.DEBUG)              # all LLM traffic here
+    llm_handler.setFormatter(formatter)
+
+    # ---------- general logger: echo.* (app + toolkit) ----------
+    echo_logger = logging.getLogger("echo")
+    echo_logger.setLevel(logging.DEBUG)
+    echo_logger.handlers.clear()
+    echo_logger.addHandler(important_handler)        # INFO+ subset
+    echo_logger.addHandler(other_handler)            # everything
+    echo_logger.propagate = False                    # don't bubble to root
+
+    # ---------- LLM logger: echo.llm ----------
+    llm_logger = logging.getLogger("echo.llm")
+    llm_logger.setLevel(logging.DEBUG)
+    llm_logger.handlers.clear()
+    llm_logger.addHandler(llm_handler)               # only goes to llm.log
+    llm_logger.propagate = False                     # do NOT go to echo/other
+
+    # You can still get a generic app logger if you want:
+    logger = logging.getLogger("echo")
+    logger.info("Starting ECHO...")
+
+    # ---------------------------------------
+    # Start toolkit
+    # ---------------------------------------
+    toolkit = BaseToolkit()
+    if not toolkit.openai:
+      raise Exception('OpenAI API not initialized')
+    # Turn audio off for console I/O:
+    # toolkit.toggleTool('listen','disabled')
+    # toolkit.toggleTool('speak','disabled')
+    mainLoop(toolkit)
