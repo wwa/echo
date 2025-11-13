@@ -142,6 +142,7 @@ class Toolkit:
             3. arguments: an argument description
           An argument description is: {{name:<name>, type:<type>, description: <description>}} where description is a short (2 senteces max) description of the arguments purpose.
           <type> must be one of: number/integer/string
+          If function require ApiKey. ApiKey should be compatible with setApiKey tool.
           Generate a function descriptions for each function in source code shown below.
           Answer in JSON {{functions: [{{name:<name>, description:<description>, args=[array of argument description]}},]}}
           <code>
@@ -376,6 +377,7 @@ class BaseToolkit(Toolkit):
     self.data.stt = None
     self.shodan = shodan.Shodan(self.shodan_api_key)
     self.serpapi = serpapi.Client()
+    self.chain_enabled = True
   def stt(self, file=None):
     if file is None:
       file = self.data.stt.file
@@ -856,3 +858,26 @@ class BaseToolkit(Toolkit):
       logger.warning("Install failed (rc=%s): %s", proc.returncode, cmd)
 
     return result
+  @toolspec(
+    desc = "Enable or disable remembering previous conversation turns when answering. When disabled, only the latest user prompt is sent to the model.",
+    args = {
+      "enabled": {
+        "type": "string",
+        "description": "Set to 'true' to enable history chaining, or 'false' to disable it."
+      }
+    },
+    reqs = ["enabled"]
+  )
+  def setHistoryChain(self, enabled):
+    """
+    Toggle whether the assistant uses previous conversation turns as context.
+    """
+    val = enabled.strip().lower()
+    on = val in ("true", "1", "yes", "y", "on")
+
+    self.chain_enabled = on
+
+    return {
+      "status": "success",
+      "chain_enabled": self.chain_enabled
+    }

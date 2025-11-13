@@ -54,6 +54,12 @@ def modelOne(toolkit, messages):
   return reason, None, messages
 
 def modelLoop(toolkit, history=[]):
+  # Decide whether to include previous turns
+  if getattr(toolkit, "chain_enabled", True):
+    history_messages = sum(history, [])
+  else:
+    history_messages = []
+
   messages = [{
     "role": "system",
     "content": f"""
@@ -63,12 +69,16 @@ def modelLoop(toolkit, history=[]):
       A demonstrative pronoun such as this/that/these/it likely refers to something in conversation history, or data copied to cliboard or something that user sees on his screen.
       Regardless of action taken, respond in JSON with {{plan:<plan>,response:<text response>}}
     """ + toolkit.toolPrompt()
-    }] + sum(history, []) + [{"role":"user", "content":toolkit.userPrompt()}] + toolkit.fake('listTools') + toolkit.fake('clipboardRead')
+    }] + history_messages + [
+      {"role":"user", "content":toolkit.userPrompt()}
+    ] + toolkit.fake('listTools') + toolkit.fake('clipboardRead')
+
   content = None
   while True:
     reason, content, messages = modelOne(toolkit, messages)
     if reason == "stop":
       break
+
   history.append(messages)
   return content, history
 
@@ -106,6 +116,18 @@ def promptOption(prompt, history, helpText, toolkit):
     else:
       print("Usage: log <level>, e.g. 'log debug' or 'log info'")
     loopBehav = "continue"
+  elif prompt.lower().startswith("chain "):
+    parts = prompt.split()
+    if len(parts) >= 2:
+      mode = parts[1].lower()
+      if mode in ("on", "off"):
+        toolkit.chain_enabled = (mode == "on")
+        print(f"Conversation history chaining is now {'ENABLED' if toolkit.chain_enabled else 'DISABLED'}.")
+      else:
+        print("Usage: chain on|off")
+    else:
+      print("Usage: chain on|off")
+    loopBehav = "continue"
 
   return loopBehav
 
@@ -116,6 +138,8 @@ def mainLoop(toolkit, limit=10):
     "Type 'history' to see conversation history. \n"
     "Type 'clear' to clear history. \n"
     "Type 'reset' to reset all tools. \n\n"
+    "Type 'chain on/off' to enable or disable conversation history chaining. \n\n"
+    "Type 'log LEVEL' to change log verbose lvl. \n\n"
     "Type 'exit' to quit if you need rest. \n\n")
 
 
