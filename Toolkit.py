@@ -6,6 +6,7 @@ from types import ModuleType
 from openai import OpenAI
 from dotenv import load_dotenv
 from timeit import default_timer as timer
+import logging
 
 # Tool imports
 import shodan
@@ -29,7 +30,8 @@ import mss
 import mss.tools
 from PIL import ImageGrab, Image
 from io import BytesIO
-import logging
+import subprocess
+import shlex
 
 class AttrDict(dict):
   def __init__(self, *args, **kwargs):
@@ -748,3 +750,109 @@ class BaseToolkit(Toolkit):
       "logger": logger_name,
       "level": lvl_str
     }
+  @toolspec(
+    desc = """
+      Install software using a system package manager.
+      Supported managers: apt, apt-get, gem, pip, pip3, npm, dnf, yum, pacman.
+      Use ONLY when the user explicitly asks to install something.
+      """,
+    args = {
+      "manager": {
+        "type": "string",
+        "description": "Package manager to use: apt, apt-get, gem, pip, pip3, npm, dnf, yum, pacman."
+      },
+      "packages": {
+        "type": "string",
+        "description": "One or more package names, separated by spaces (e.g. 'curl git')."
+      },
+      "options": {
+        "type": "string",
+        "description": "Optional extra flags, e.g. '-y' or '--version \\'1.2.3\\''."
+      }
+    },
+    reqs = ["manager", "packages"]
+  )
+  def installSoftware(self, manager, packages, options=""):
+    """
+    Install software packages using a system package manager.
+
+    SECURITY NOTE:
+    - This runs commands on the host system.
+    - Only enable/use this if you trust the model+prompt, and the environment is yours.
+    """
+    logger = logging.getLogger("echo.toolkit.install")
+
+    manager = manager.strip()
+    options = options or ""
+
+    # Whitelist allowed managers
+    allowed = {"apt", "apt-get", "gem", "pip", "pip3", "npm", "dnf", "yum", "pacman"}
+    if manager not in allowed:
+      return {
+        "status": "error",
+        "error": f"Manager '{manager}' not allowed. Allowed: {sorted(list(allowed))}"
+      }
+
+    # Build base command
+    cmd = [manager]
+
+    # For these managers, auto-add "install" subcommand if not provided
+    auto_install = {"apt", "apt-get", "dnf", "yum", "pacman"}
+    if manager in auto_install:
+      cmd.append("install")
+
+    # Add extra options if given
+    if options.strip():
+      try:
+        cmd.extend(shlex.split(options))
+      except ValueError as e:
+        return {
+          "status": "error",
+          "error": f"Could not parse options: {e}"
+        }
+
+    # Split packages by whitespace into a list
+    pkg_list = [p for p in packages.split() if p.strip()]
+    if not pkg_list:
+      return {
+        "status": "error",
+        "error": "No packages specified after splitting 'packages' by spaces."
+      }
+
+    cmd.extend(pkg_list)
+
+    logger.info("Running install command: %s", cmd)
+
+    try:
+      proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True
+      )
+    except FileNotFoundError:
+      return {
+        "status": "error",
+        "error": f"Command '{manager}' not found on this system."
+      }
+    except Exception as e:
+      logger.exception("installSoftware raised exception")
+      return {
+        "status": "error",
+        "error": f"Exception while running install: {e}"
+      }
+
+    result = {
+      "status": "success" if proc.returncode == 0 else "error",
+      "returncode": proc.returncode,
+      "command": cmd,
+      "stdout": proc.stdout,
+      "stderr": proc.stderr
+    }
+
+    # Log a short summary
+    if proc.returncode == 0:
+      logger.info("Install succeeded: %s", cmd)
+    else:
+      logger.warning("Install failed (rc=%s): %s", proc.returncode, cmd)
+
+    return result

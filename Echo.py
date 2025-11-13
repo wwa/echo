@@ -150,7 +150,7 @@ if __name__ == "__main__":
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
       logging.FileHandler(os.path.join(LOG_DIR, "echo.log")),
-      logging.StreamHandler()
+      #logging.StreamHandler()
     ]
   )
 
