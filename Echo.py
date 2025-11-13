@@ -2,13 +2,15 @@ import os
 import json
 import traceback
 from timeit import default_timer as timer
-from toolkit import BaseToolkit
+
+#Own
+from Toolkit import BaseToolkit
 
 def modelOne(toolkit, messages):
   ts_s = timer()
   print("Prompting...")
   res = toolkit.openai.chat.completions.create(
-    model    = "gpt-4-turbo-preview",
+    model    = toolkit.openai_chat_model,
     messages = messages,
     tools    = toolkit.toolMessage(),
     tool_choice = "auto"
@@ -46,12 +48,54 @@ def modelLoop(toolkit, history=[]):
   history.append(messages)
   return content, history
 
+def promptOption(prompt, history, helpText, toolkit):
+  loopBehav = ""
+
+  if (prompt == "exit" or prompt == "Exit" or prompt == "e"):
+    print("Goodbye!")
+    loopBehav = "break"
+  elif (prompt == "history" or prompt == "History" or prompt == "h"):
+    print(history)
+    loopBehav = "continue"
+  elif (prompt == "clear" or prompt == "Clear" or prompt == "c"):
+    history = []
+    loopBehav = "continue"
+  elif (prompt == "reset" or prompt == "Reset" or prompt == "r"):
+    toolkit.reset()
+    print("All tools reset.")
+    loopBehav = "continue"
+  elif (prompt == "help" or prompt == "?" or prompt == "Help" or prompt == "h"):
+    print(helpText)
+    loopBehav = "continue"
+
+  return loopBehav
+
 def mainLoop(toolkit, limit=10):
   history = []
+
+  helpText = (
+    "Type 'history' to see conversation history. \n"
+    "Type 'clear' to clear history. \n"
+    "Type 'reset' to reset all tools. \n\n"
+    "Type 'exit' to quit if you need rest. \n\n")
+
+
+  print("Welcome to ECHO! Deep dive into my power. \n "
+        " ------------------ \n"
+        f"{helpText}")
+
   while True:
     try:
+      print(">> ", end="")
       prompt = toolkit.input()
-      print(prompt)
+
+      lOps = promptOption(prompt, history, helpText, toolkit)
+      if lOps == "break":
+        break
+      elif lOps == "continue":
+        continue
+
+      print(f"User input: {prompt}")
       content, history = modelLoop(toolkit, history)
       history = history[:limit]
       print(content)

@@ -8,22 +8,25 @@ from dotenv import load_dotenv
 from timeit import default_timer as timer
 
 # Tool imports
+import shodan
 import time
 import os
 import webbrowser
 import threading
 import pytesseract
-import clipboard
+import pyperclip
 import pyttsx3
 import base64
-import pygetwindow
+import pywinctl as pwc
 import pyautogui
 import serpapi
 import arxiv
 import urllib
 import urllib.parse
-from playsound import playsound
+from playsound3 import playsound
 import speech_recognition as sr
+import mss
+import mss.tools
 from PIL import ImageGrab, Image
 from io import BytesIO
 
@@ -86,21 +89,45 @@ class Toolkit:
         continue
       if not hasattr(func, '_toolspec'):
         continue
-      func._toolspec.function = func # overwrite with bound ref
+      func._toolspec.function = func
       self._toolspec[name] = func._toolspec
+
     load_dotenv()
-    if "OPENAI_API_KEY" in os.environ:
-      self.openai = OpenAI()
+
+    self.shodan_api_key = os.getenv("SHODAN_API_KEY", "Missing Key")
+    self.enable_listen = os.getenv("ENABLE_LISTEN", "false").lower() == "true"
+    self.enable_speak = os.getenv("ENABLE_SPEAK", "false").lower() == "true"
+
+    # --- OpenAI config from .env ---
+    self.openai_api_key    = os.getenv("OPENAI_API_KEY")
+    self.openai_base_url = os.getenv("OPENAI_BASE_URL")
+
+    self.openai_chat_model     = os.getenv("OPENAI_CHAT_MODEL", "gpt-4-turbo-preview")
+    self.openai_vision_model   = os.getenv("OPENAI_VISION_MODEL", "gpt-4-vision-preview")
+    self.openai_research_model = os.getenv("OPENAI_RESEARCH_MODEL", self.openai_chat_model)
+    self.openai_stt_model      = os.getenv("OPENAI_STT_MODEL", "whisper-1")
+
+    client_kwargs = {}
+    if self.openai_api_key:
+      client_kwargs["api_key"] = self.openai_api_key
+    if self.openai_base_url:
+      client_kwargs["base_url"] = self.openai_base_url
+
+    if client_kwargs:
+      self.openai = OpenAI(**client_kwargs)
     else:
-      # model-assisted functions like addToolBySrc will be unavailable
       self.openai = None
+
+  def reset(self):
+    print("Resetting Toolkit")
+
   def toolspecBySrc(self, src, context=""):
     # Generates openAI tool_calls specifications from source code
     #   WARNING: model-generated, not bulletproof.
     if not self.openai:
       raise Exception("Model-assisted functions unavailable")
     res = self.openai.chat.completions.create(
-      model    = "gpt-4-turbo-preview",
+      model    = self.openai_chat_model,
       messages = [{
         "role": "system",
         "content": f"""
@@ -167,30 +194,29 @@ class Toolkit:
         msgs.append(tool.spec)
     return msgs
   def call(self, cid, func):
-    # Calls a tool.
-    #   func is a message.tool_calls[i].function object
     ts_s = timer()
     print(f"Calling {func.name}")
     res = "Error: Unknown error."
+
     if func.name not in self._toolspec:
       res = "Error: Function not found."
-    elif self._toolspec[func.name].state == "enabled":
+    elif self._toolspec[func.name].state == "disabled":
       res = "Error: Function is disabled."
-    try:
-      args = json.loads(func.arguments)
-      res = self._toolspec[func.name].function(**args)
-    except Exception as e:
-      # very important! most of the time model will correct itself if you let it know where it screwed up.
-      res = f"Error: <backtrace>\n{traceback.format_exc()}\n</backtrace>"
-      print(res)
-      pass
+    else:
+      try:
+        args = json.loads(func.arguments)
+        res = self._toolspec[func.name].function(**args)
+      except Exception as e:
+        res = f"Error: <backtrace>\n{traceback.format_exc()}\n</backtrace>"
+        print(res)
+
     ts_e = timer()
     print(f"... took {ts_e-ts_s}s")
     return {
-      "role": "tool", 
+      "role": "tool",
       "tool_call_id": cid,
-      "name": func.name, 
-      "content": f'{{"result": {str(res)}}}'
+      "name": func.name,
+      "content": f'{{\"result\": {str(res)}}}'
     }
   def fake(self,name,args='{}'):
     # Fake a tool call. Saves a model call while preserving context flow.
@@ -251,20 +277,106 @@ class Toolkit:
       func = getattr(self.module, name)
       logs += self.addTool(func, spec, src)
     return logs
+
+  def _update_env_var(self, key, value):
+    os.environ[key] = value
+    env_path = os.path.join(os.getcwd(), ".env")
+    try:
+      lines = []
+      if os.path.exists(env_path):
+        with open(env_path, "r") as f:
+          lines = f.read().splitlines()
+
+      prefix = key + "="
+      found = False
+      new_lines = []
+      for line in lines:
+        if line.startswith(prefix):
+          new_lines.append(f"{key}={value}")
+          found = True
+        else:
+          new_lines.append(line)
+
+      if not found:
+        new_lines.append(f"{key}={value}")
+
+      with open(env_path, "w") as f:
+        f.write("\n".join(new_lines) + "\n")
+
+      return True
+    except Exception as e:
+      print(f"Warning: could not persist {key} to .env: {e}")
+      return False
+
+  @toolspec(
+    desc="Set or update API keys for external services (OpenAI, Shodan, SerpAPI).",
+    args={
+      "service": {
+        "type": "string",
+        "description": "Service name: 'openai', 'shodan', or 'serpapi'."
+      },
+      "api_key": {
+        "type": "string",
+        "description": "API key or token for the given service."
+      }
+    },
+    reqs=["service", "api_key"]
+  )
+  def setApiKey(self, service, api_key):
+    svc = service.lower()
+    persisted = False
+
+    if svc == "openai":
+      # Update OpenAI client
+      self.openai_api_key = api_key
+      persisted = self._update_env_var("OPENAI_API_KEY", api_key)
+      client_kwargs = {"api_key": api_key}
+      if getattr(self, "openai_base_url", None):
+        client_kwargs["base_url"] = self.openai_base_url
+      self.openai = OpenAI(**client_kwargs)
+
+    elif svc == "shodan":
+      self.shodan_api_key = api_key
+      persisted = self._update_env_var("SHODAN_API_KEY", api_key)
+      self.shodan = shodan.Shodan(api_key)
+
+    elif svc == "serpapi":
+      persisted = self._update_env_var("SERPAPI_API_KEY", api_key)
+      # serpapi.Client can take api_key explicitly
+      self.serpapi = serpapi.Client(api_key=api_key)
+
+    else:
+      return json.dumps({
+        "status": "error",
+        "error": f"Unknown service '{service}'. Use one of: openai, shodan, serpapi."
+      })
+
+    return json.dumps({
+      "status": "success",
+      "service": svc,
+      "persisted": persisted
+    })
   
 class BaseToolkit(Toolkit):
   # Contains basic user communication functions
   def __init__(self):
     super(BaseToolkit, self).__init__()
     self.data.stt = None
-    self.serpapi  = serpapi.Client()
+    self.shodan = shodan.Shodan(self.shodan_api_key)
+    self.serpapi = serpapi.Client()
   def stt(self, file=None):
     if file is None:
       file = self.data.stt.file
     with open(file, "rb") as f:
-      return self.openai.audio.transcriptions.create(model="whisper-1", file=f, response_format="text")
+      return self.openai.audio.transcriptions.create(
+        model=self.openai_stt_model,
+        file=f,
+        response_format="text"
+      )
   @toolspec(desc="Get input from speech-to-text. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, audio")
   def listen(self):
+    if not self.enable_listen:
+        return "{status: disabled, reason: 'Speech input disabled in .env'}"
     if self.data.stt is None:
       rec = sr.Recognizer()
       mic = sr.Microphone()
@@ -280,7 +392,7 @@ class BaseToolkit(Toolkit):
     return input()
   def input(self):
     text = None
-    if 'listen' in self._toolspec and self._toolspec.listen.state == "enabled":
+    if 'listen' in self._toolspec and self._toolspec.listen.state == "enabled" and self.enable_listen:
       self.listen()
       text = self.stt()
     else:
@@ -309,7 +421,7 @@ class BaseToolkit(Toolkit):
     args = {"url": {"type": "string", "description": "File to download"}},
     reqs = ["url"]
   )
-  def download(url, filename=None):
+  def download(self, url, filename=None):
     # downloads to tmp by default
     file, _ = urllib.request.urlretrieve(url, filename)
     return f"{{status: success, file={file}}}"
@@ -341,20 +453,20 @@ class BaseToolkit(Toolkit):
     prompt = "When user says 'say','tell' etc use speak."
   )
   def speak(self, text):
-    threading.Thread(target=self.localtts, kwargs={'text':text}).start()
+    if not self.enable_speak:
+        return "{status: disabled, reason: 'Speech output disabled in .env'}"
+    threading.Thread(target=self.localtts, kwargs={'text': text}).start()
     return "{status: success}"
-  
-  def screenshot(self,title=None):
-    win = pygetwindow.getActiveWindow()
-    if title:
-      win = pygetwindow.getWindowsWithTitle(title)[0]
-    img = None
-    if win:
-      img = pyautogui.screenshot(region=(win.left, win.top, win.width, win.height))
-    else:
-      img = pyautogui.screenshot()
-    self.data.screenshot = img
+
+  def screenshot(self, title=None):
+    with mss.mss() as sct:
+      monitor = sct.monitors[1]  # 0 = all, 1 = primary
+      img = sct.grab(monitor)
+      img_pil = Image.frombytes("RGB", img.size, img.rgb)
+      self.data.screenshot = img_pil
     return "{status: success}"
+
+
   def selectImage(self, image=None):
     if image is None:
       try:
@@ -388,7 +500,7 @@ class BaseToolkit(Toolkit):
     img = self.selectImage(img)
     ocr = self.ocr(img)
     res = self.openai.chat.completions.create(
-      model="gpt-4-vision-preview",
+      model=self.openai_vision_model,
       max_tokens=500,
       messages=[{
         "role": "system",
@@ -420,17 +532,35 @@ class BaseToolkit(Toolkit):
     reqs = ["text"]
   )
   def clipboardWrite(self, text):
-    clipboard.copy(text)
+    pyperclip.copy(text)
     return "{status: success}"
   
   @toolspec(desc="Read contents of users clipboard. Returns {status:<status>, type:<type of content>, content: <text content>}. Category: input, text, copy-paste")
   def clipboardRead(self):
-    img = ImageGrab.grabclipboard()
-    if img:
+    img = None
+
+    # Try image clipboard first
+    try:
+      img = ImageGrab.grabclipboard()
+    except NotImplementedError as e:
+      # Wayland / missing backend (wl-paste/xclip)
+      print(f"Image clipboard not supported on this system: {e}")
+    except Exception as e:
+      print(f"Error grabbing image from clipboard: {e}")
+
+    if isinstance(img, Image.Image):
       self.data.clipboard = img
-      return f"{{status: success, type: image}}"
-    self.data.clipboard = clipboard.paste()
-    return f"{{status: success, type: text, content:{self.data.clipboard}}}"
+      return '{"status": "success", "type": "image"}'
+
+    # Fallback to text via pyperclip
+    try:
+      text = pyperclip.paste()
+      self.data.clipboard = text
+      # use json.dumps to keep JSON valid even if text has quotes/newlines
+      return '{"status": "success", "type": "text", "content": ' + json.dumps(text) + '}'
+    except Exception as e:
+      print(f"Clipboard text read failed: {e}")
+      return '{"status": "error", "reason": "Clipboard not accessible"}'
 
   @toolspec(
     desc = "Search arxiv for publications. Returns {url:<permalink>, title:<title>, authors:<authors>, summary:<summary>}",
@@ -473,11 +603,11 @@ class BaseToolkit(Toolkit):
         instructions="""
           You are a research assistant.
           Your job is to process scientific papers.
-          Display mathematical formulas using MathJax \[ markdown \] blocks.
+          Display mathematical formulas using MathJax \\[ markdown \\] blocks.
         """,
         name  = "Echo research",
         tools = [{"type": "code_interpreter"}, {"type": "retrieval"}],
-        model = "gpt-4-turbo-preview"
+        model = self.openai_research_model
       )
       thr = self.openai.beta.threads.create(metadata={'aid':ass.id})
       print(f"New research context: {thr.id}")
@@ -508,3 +638,60 @@ class BaseToolkit(Toolkit):
     print(f"... took {ts_e-ts_s}s")
     return {'research_id': thr.id, 'message': msg}
 
+  @toolspec(
+    desc="Interact with Shodan API. Search for internet-connected devices.",
+    args={
+      "query": {"type": "string", "description": "The search query to pass to Shodan."},
+    },
+    reqs=["query"]
+  )
+  def shodanSearch(self, query):
+    results = self.shodan.search(query)
+    return f"{{status: success, results:{results}}}"
+
+  @toolspec(
+    desc="Interact with Shodan API. Search for internet-connected devices.",
+    args={
+      "ip_address": {"type": "string", "optional": True, "description": "IP address to get host information for."}
+    },
+    reqs=["ip_address"]
+  )
+  def shodanHostInfo(self, ip_address):
+    host_info = self.shodan.host(ip_address)
+    return f"{{status: success, result:{host_info}}}"
+
+  @toolspec(
+    desc="Change which OpenAI model the toolkit uses at runtime.",
+    args={
+      "target": {
+        "type": "string",
+        "description": "Which model to change: one of 'chat', 'vision', 'research', 'stt'."
+      },
+      "model": {
+        "type": "string",
+        "description": "New OpenAI model name, e.g. 'gpt-4.1-mini' or 'gpt-4.1'."
+      }
+    },
+    reqs=["target", "model"]
+  )
+  def setOpenAIModel(self, target, model):
+    target_l = target.lower()
+    if target_l == "chat":
+      self.openai_chat_model = model
+    elif target_l == "vision":
+      self.openai_vision_model = model
+    elif target_l == "research":
+      self.openai_research_model = model
+    elif target_l == "stt":
+      self.openai_stt_model = model
+    else:
+      return json.dumps({
+        "status": "error",
+        "error": f"Unknown target '{target}'. Use one of: chat, vision, research, stt."
+      })
+
+    return json.dumps({
+      "status": "success",
+      "target": target_l,
+      "model": model
+    })
