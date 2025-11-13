@@ -2,12 +2,23 @@ import os
 import json
 import traceback
 from timeit import default_timer as timer
+import logging
+from dotenv import load_dotenv
 
 #Own
 from Toolkit import BaseToolkit
 
 def modelOne(toolkit, messages):
   ts_s = timer()
+  logger = logging.getLogger("echo.modelOne.LLM")
+
+  try:
+    logger.info("LLM Request: model=%s", toolkit.openai_chat_model)
+    logger.debug("LLM Request Messages: %s", json.dumps(messages, indent=2, ensure_ascii=False))
+    logger.debug("LLM Tools Spec: %s", json.dumps(toolkit.toolMessage(), indent=2, ensure_ascii=False))
+  except Exception:
+    logger.exception("Failed to log LLM request.")
+    traceback.print_exc()
   print("Prompting...")
   res = toolkit.openai.chat.completions.create(
     model    = toolkit.openai_chat_model,
@@ -17,18 +28,24 @@ def modelOne(toolkit, messages):
   )
   ts_e = timer()
   print(f"... took {ts_e-ts_s}s")
+  try:
+    logger.info("LLM Response received.")
+    logger.debug("LLM Raw Response JSON: %s", res.model_dump_json(indent=2))
+  except Exception:
+    logger.exception("Failed to log LLM response.")
+    traceback.print_exc()
   reason  = res.choices[0].finish_reason
   message = res.choices[0].message
   if reason == "stop":
     messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'tool_calls'})))
     return reason, message.content, messages
   if reason == "tool_calls":
-    # exclude because model_dump_json produces string Nones which can't be injested back
     messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'content'})))
     for tc in message.tool_calls:
       if tc.type == "function":
         messages.append(toolkit.call(tc.id, tc.function))
-  return reason,None,messages
+  return reason, None, messages
+
 def modelLoop(toolkit, history=[]):
   messages = [{
     "role": "system",
@@ -54,7 +71,7 @@ def promptOption(prompt, history, helpText, toolkit):
   if (prompt == "exit" or prompt == "Exit" or prompt == "e"):
     print("Goodbye!")
     loopBehav = "break"
-  elif (prompt == "history" or prompt == "History" or prompt == "h"):
+  elif (prompt == "history" or prompt == "History" or prompt == "hh"):
     print(history)
     loopBehav = "continue"
   elif (prompt == "clear" or prompt == "Clear" or prompt == "c"):
@@ -66,6 +83,21 @@ def promptOption(prompt, history, helpText, toolkit):
     loopBehav = "continue"
   elif (prompt == "help" or prompt == "?" or prompt == "Help" or prompt == "h"):
     print(helpText)
+    loopBehav = "continue"
+  elif prompt.lower().startswith("log "):
+    parts = prompt.split()
+    if len(parts) >= 2:
+      level_name = parts[1].upper()
+      if level_name in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+        logger = logging.getLogger("echo")
+        logger.setLevel(getattr(logging, level_name))
+        logging.getLogger().setLevel(getattr(logging, level_name))
+
+        print(f"Log level changed to {level_name}")
+      else:
+        print("Unknown log level. Use one of: debug, info, warning, error, critical.")
+    else:
+      print("Usage: log <level>, e.g. 'log debug' or 'log info'")
     loopBehav = "continue"
 
   return loopBehav
@@ -104,6 +136,30 @@ def mainLoop(toolkit, limit=10):
       pass
 
 if __name__ == "__main__":
+  LOG_DIR = "logs"
+  os.makedirs(LOG_DIR, exist_ok=True)
+
+  load_dotenv()
+
+  log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+  print(log_level_name)
+  log_level = getattr(logging, log_level_name, logging.INFO)
+
+  logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+      logging.FileHandler(os.path.join(LOG_DIR, "echo.log")),
+      logging.StreamHandler()
+    ]
+  )
+
+  logger = logging.getLogger("echo")
+  logger.info("Starting ECHO...")
+
+  # ---------------------------------------
+  # Start toolkit
+  # ---------------------------------------
   toolkit = BaseToolkit()
   if not toolkit.openai:
     raise Exception('OpenAI API not initialized')

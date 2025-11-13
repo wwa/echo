@@ -29,6 +29,7 @@ import mss
 import mss.tools
 from PIL import ImageGrab, Image
 from io import BytesIO
+import logging
 
 class AttrDict(dict):
   def __init__(self, *args, **kwargs):
@@ -83,6 +84,7 @@ class Toolkit:
     self.data      = AttrDict()
     self.module    = ModuleType("DynaToolKit")
     self._toolspec = AttrDict()
+    self.logger    = logging.getLogger(f"echo.toolkit.{self.__class__.__name__}")
     for name in dir(self):
       func = getattr(self, name)
       if not callable(func):
@@ -195,28 +197,36 @@ class Toolkit:
     return msgs
   def call(self, cid, func):
     ts_s = timer()
-    print(f"Calling {func.name}")
+    self.logger.info("Tool call requested: %s", func.name)
+
     res = "Error: Unknown error."
 
     if func.name not in self._toolspec:
       res = "Error: Function not found."
+      self.logger.error("Tool %s not found", func.name)
     elif self._toolspec[func.name].state == "disabled":
       res = "Error: Function is disabled."
+      self.logger.warning("Tool %s is disabled", func.name)
     else:
       try:
         args = json.loads(func.arguments)
+        self.logger.info("Calling tool %s with args=%s", func.name, args)
         res = self._toolspec[func.name].function(**args)
+        self.logger.info("Tool %s completed successfully", func.name)
       except Exception as e:
         res = f"Error: <backtrace>\n{traceback.format_exc()}\n</backtrace>"
+        self.logger.error("Tool %s raised exception: %s", func.name, e)
         print(res)
 
     ts_e = timer()
+    self.logger.info("Tool %s finished in %.3fs", func.name, ts_e - ts_s)
     print(f"... took {ts_e-ts_s}s")
+
     return {
       "role": "tool",
       "tool_call_id": cid,
       "name": func.name,
-      "content": f'{{\"result\": {str(res)}}}'
+      "content": json.dumps({"result": res})
     }
   def fake(self,name,args='{}'):
     # Fake a tool call. Saves a model call while preserving context flow.
@@ -695,3 +705,46 @@ class BaseToolkit(Toolkit):
       "target": target_l,
       "model": model
     })
+
+  @toolspec(
+    desc="Change logging level at runtime. Useful to increase or decrease verbosity (debug/info/warning/error/critical).",
+    args={
+      "level": {
+        "type": "string",
+        "description": "New log level: one of 'debug', 'info', 'warning', 'error', 'critical'."
+      },
+      "logger_name": {
+        "type": "string",
+        "description": "Optional logger name, default 'echo'. For fine-grained control you can use 'echo.llm' or 'echo.toolkit.BaseToolkit'."
+      }
+    },
+    reqs=["level"]
+  )
+  def setLogLevel(self, level, logger_name="echo"):
+    lvl_str = level.upper()
+    mapping = {
+      "DEBUG": logging.DEBUG,
+      "INFO": logging.INFO,
+      "WARNING": logging.WARNING,
+      "ERROR": logging.ERROR,
+      "CRITICAL": logging.CRITICAL,
+    }
+    if lvl_str not in mapping:
+      return {
+        "status": "error",
+        "error": f"Unknown level '{level}'. Use one of: debug, info, warning, error, critical."
+      }
+
+    lvl = mapping[lvl_str]
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(lvl)
+
+    # Optionally: also raise root level so everything respects it
+    if logger_name == "echo":
+      logging.getLogger().setLevel(lvl)
+
+    return {
+      "status": "success",
+      "logger": logger_name,
+      "level": lvl_str
+    }

@@ -53,5 +53,8 @@ fabric.properties
 # modules.xml
 
 
+#logs
+/logs/
+
 # CUSTOM
 .env
