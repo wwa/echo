@@ -27,7 +27,7 @@ MODEL_CONTEXT_LIMITS = {
 # WebSocket log streaming support
 # -------------------------------
 _ws_loop = None
-_ws_streams = {}         
+_ws_streams = {}
 
 
 class WebSocketLogHandler(logging.Handler):

@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Echo WebSocket Log Viewer</title>
+<style>
+    :root {
+        --bg: #111827;
+        --bg-secondary: #020617;
+        --card-bg: #020617;
+        --card-border: #1f2937;
+        --header-bg: #0f172a;
+        --accent: #38bdf8;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --danger: #f97373;
+        --success: #4ade80;
+        --warning: #facc15;
+    }
+
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #0f172a, #020617 40%, #000 100%);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+    }
+
+    header {
+        padding: 10px 16px;
+        background: rgba(15, 23, 42, 0.95);
+        border-bottom: 1px solid #1f2937;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        backdrop-filter: blur(10px);
+    }
+
+    header .title {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    header .title span.logo {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: linear-gradient(135deg, #38bdf8, #22c55e);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: 700;
+        color: #0f172a;
+    }
+
+    header .controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted);
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .badge {
+        padding: 2px 8px;
+        border-radius: 9999px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        border: 1px solid #1f2937;
+        background: #020617;
+    }
+
+    .badge.ok {
+        border-color: #16a34a;
+        color: #bbf7d0;
+    }
+
+    .badge.err {
+        border-color: #f97316;
+        color: #fed7aa;
+    }
+
+    .btn {
+        border-radius: 9999px;
+        border: 1px solid #374151;
+        padding: 4px 10px;
+        font-size: 12px;
+        background: #020617;
+        color: var(--text);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: background 0.15s, border-color 0.15s, transform 0.05s;
+        white-space: nowrap;
+    }
+
+    .btn:hover {
+        background: #111827;
+        border-color: #4b5563;
+    }
+
+    .btn:active {
+        transform: scale(0.97);
+    }
+
+    .btn.small {
+        padding: 2px 8px;
+        font-size: 11px;
+    }
+
+    .btn-outline {
+        background: transparent;
+    }
+
+    .btn.primary {
+        border-color: #38bdf8;
+        background: rgba(56, 189, 248, 0.1);
+        color: #e0f2fe;
+    }
+
+    .btn.primary:hover {
+        background: rgba(56, 189, 248, 0.2);
+    }
+
+    main {
+        padding: 10px;
+        flex: 1;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        grid-template-rows: repeat(2, 1fr);
+        gap: 10px;
+        min-height: 0;
+    }
+
+    .card {
+        background: radial-gradient(circle at top left, #0b1120, #020617);
+        border-radius: 14px;
+        border: 1px solid var(--card-border);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.7);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-height: 0;
+    }
+
+    .card-header {
+        padding: 8px 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border-bottom: 1px solid #1f2937;
+        background: linear-gradient(90deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.5));
+    }
+
+    .card-header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .chip-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 9999px;
+        background: #4ade80;
+        box-shadow: 0 0 10px rgba(74, 222, 128, 0.9);
+    }
+
+    .chip-dot.paused {
+        background: #f97316;
+        box-shadow: 0 0 10px rgba(249, 115, 22, 0.9);
+    }
+
+    .chip-dot.disconnected {
+        background: #6b7280;
+        box-shadow: none;
+    }
+
+    .card-title {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #e5e7eb;
+    }
+
+    .status-text {
+        font-size: 11px;
+        color: var(--muted);
+    }
+
+    .card-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .log {
+        flex: 1;
+        padding: 8px;
+        overflow-y: auto;
+        font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        line-height: 1.35;
+        background: #020617;
+    }
+
+    .log-line {
+        white-space: pre-wrap;
+        margin: 0;
+    }
+
+    .log-line span.level {
+        font-weight: 600;
+        padding-right: 4px;
+    }
+
+    .level-debug { color: #9ca3af; }
+    .level-info { color: #a5b4fc; }
+    .level-warning { color: #fbbf24; }
+    .level-error { color: #f97373; }
+    .level-critical { color: #f97316; text-decoration: underline; }
+
+    .log-line.dim {
+        opacity: 0.7;
+    }
+
+    footer {
+        padding: 6px 10px;
+        font-size: 11px;
+        color: var(--muted);
+        display: flex;
+        justify-content: space-between;
+        border-top: 1px solid #111827;
+        background: rgba(15, 23, 42, 0.9);
+    }
+
+    input[type="text"],
+    input[type="number"] {
+        font-family: inherit;
+    }
+</style>
+</head>
+<body>
+
+<header>
+    <div class="title">
+        <span class="logo">E</span>
+        Echo Log Streams
+        <span class="badge ok" id="global-status">Live</span>
+    </div>
+    <div class="controls">
+        <label style="font-size:12px;color:#9ca3af;">
+            Host:
+            <input id="cfg-host" type="text" value="127.0.0.1"
+                   style="width:110px;padding:3px 6px;background:#0f172a;color:#e5e7eb;border:1px solid #374151;border-radius:6px;">
+        </label>
+
+        <label style="font-size:12px;color:#9ca3af;">
+            Port:
+            <input id="cfg-port" type="number" value="9876"
+                   style="width:70px;padding:3px 6px;background:#0f172a;color:#e5e7eb;border:1px solid #374151;border-radius:6px;">
+        </label>
+
+        <button class="btn primary small" id="apply-config">Apply</button>
+
+        <button class="btn btn-outline small" id="global-pause-btn">⏸ Pause All</button>
+        <button class="btn btn-outline small" id="global-clear-btn">🧹 Clear All</button>
+        <span>WS: <span id="ws-url" style="color:#e0f2fe"></span></span>
+    </div>
+</header>
+
+<main>
+    <div class="card" data-stream="app">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="chip-dot" id="dot-app"></div>
+                <div>
+                    <div class="card-title">/app</div>
+                    <div class="status-text" id="status-app">Connecting…</div>
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="btn small" data-action="pause" data-stream="app">⏸ Pause</button>
+                <button class="btn small btn-outline" data-action="clear" data-stream="app">🧹 Clear</button>
+            </div>
+        </div>
+        <div id="log-app" class="log"></div>
+    </div>
+
+    <div class="card" data-stream="llm">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="chip-dot" id="dot-llm"></div>
+                <div>
+                    <div class="card-title">/llm</div>
+                    <div class="status-text" id="status-llm">Connecting…</div>
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="btn small" data-action="pause" data-stream="llm">⏸ Pause</button>
+                <button class="btn small btn-outline" data-action="clear" data-stream="llm">🧹 Clear</button>
+            </div>
+        </div>
+        <div id="log-llm" class="log"></div>
+    </div>
+
+    <div class="card" data-stream="trace">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="chip-dot" id="dot-trace"></div>
+                <div>
+                    <div class="card-title">/trace</div>
+                    <div class="status-text" id="status-trace">Connecting…</div>
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="btn small" data-action="pause" data-stream="trace">⏸ Pause</button>
+                <button class="btn small btn-outline" data-action="clear" data-stream="trace">🧹 Clear</button>
+            </div>
+        </div>
+        <div id="log-trace" class="log"></div>
+    </div>
+
+    <div class="card" data-stream="tools">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="chip-dot" id="dot-tools"></div>
+                <div>
+                    <div class="card-title">/tools</div>
+                    <div class="status-text" id="status-tools">Connecting…</div>
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="btn small" data-action="pause" data-stream="tools">⏸ Pause</button>
+                <button class="btn small btn-outline" data-action="clear" data-stream="tools">🧹 Clear</button>
+            </div>
+        </div>
+        <div id="log-tools" class="log"></div>
+    </div>
+</main>
+
+<footer>
+    <div>⏱ Auto-reconnect · Per-stream pause · Color-coded levels</div>
+    <div>Paths: /app /llm /trace /tools</div>
+</footer>
+
+<script>
+const STREAM_NAMES = ["app", "llm", "trace", "tools"];
+const MAX_LINES_PER_STREAM = 500;
+
+// Auto-reconnect config
+const RECONNECT_BASE_DELAY_MS = 500;
+const RECONNECT_MAX_DELAY_MS = 5000;
+
+// Per-stream state
+const state = {};
+STREAM_NAMES.forEach(name => {
+    state[name] = {
+        ws: null,
+        paused: false,
+        reconnectAttempts: 0,
+        manualClose: false,
+    };
+});
+
+function $(id) {
+    return document.getElementById(id);
+}
+
+function setDotState(stream, mode) {
+    const dot = $(`dot-${stream}`);
+    if (!dot) return;
+    dot.classList.remove("paused", "disconnected");
+    if (mode === "paused") dot.classList.add("paused");
+    else if (mode === "disconnected") dot.classList.add("disconnected");
+}
+
+function setStatus(stream, text) {
+    const el = $(`status-${stream}`);
+    if (el) el.textContent = text;
+}
+
+function createLogLineElement(text) {
+    const line = document.createElement("div");
+    line.className = "log-line";
+
+    const levelMatch = text.match(/\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]/i);
+    let levelClass = "";
+    let levelLabel = "";
+    if (levelMatch) {
+        levelLabel = levelMatch[1].toUpperCase();
+        switch (levelLabel) {
+            case "DEBUG": levelClass = "level-debug"; break;
+            case "INFO": levelClass = "level-info"; break;
+            case "WARNING": levelClass = "level-warning"; break;
+            case "ERROR": levelClass = "level-error"; break;
+            case "CRITICAL": levelClass = "level-critical"; break;
+        }
+    }
+
+    if (levelClass) {
+        const levelSpan = document.createElement("span");
+        levelSpan.className = `level ${levelClass}`;
+        levelSpan.textContent = `[${levelLabel}] `;
+        line.appendChild(levelSpan);
+
+        const idx = text.indexOf(levelMatch[0]);
+        if (idx !== -1) {
+            text = text.slice(0, idx) + text.slice(idx + levelMatch[0].length);
+        }
+    }
+
+    const rest = document.createElement("span");
+    rest.textContent = text.trim();
+    line.appendChild(rest);
+
+    if (levelLabel === "DEBUG") {
+        line.classList.add("dim");
+    }
+
+    return line;
+}
+
+function appendLog(stream, text) {
+    const div = $(`log-${stream}`);
+    if (!div) return;
+
+    const line = createLogLineElement(text);
+    div.appendChild(line);
+
+    while (div.childNodes.length > MAX_LINES_PER_STREAM) {
+        div.removeChild(div.firstChild);
+    }
+
+    div.scrollTop = div.scrollHeight;
+}
+
+let HOST;
+let PORT;
+let globalPaused = false;
+
+// Dynamic config: host/port from localStorage or defaults
+function initConfig() {
+    HOST = localStorage.getItem("echo-ws-host") || "127.0.0.1";
+    PORT = parseInt(localStorage.getItem("echo-ws-port") || "9876", 10);
+
+    $("cfg-host").value = HOST;
+    $("cfg-port").value = PORT;
+
+    $("ws-url").textContent =
+        `ws://${HOST}:${PORT}/[app|llm|trace|tools]`;
+}
+
+function connectStream(stream) {
+    const url = `ws://${HOST}:${PORT}/${stream}`;
+    const st = state[stream];
+
+    if (st.ws) {
+        try { st.ws.close(); } catch (_) {}
+    }
+
+    st.manualClose = false;
+    st.reconnectAttempts = 0;
+    setStatus(stream, `Connecting to ${url}…`);
+    setDotState(stream, st.paused ? "paused" : "");
+
+    const ws = new WebSocket(url);
+    st.ws = ws;
+
+    ws.onopen = () => {
+        st.reconnectAttempts = 0;
+        if (st.paused || globalPaused) {
+            setStatus(stream, "Connected (paused)");
+            setDotState(stream, "paused");
+        } else {
+            setStatus(stream, "Connected");
+            setDotState(stream, "");
+        }
+    };
+
+    ws.onmessage = (ev) => {
+        if (!st.paused && !globalPaused) {
+            appendLog(stream, ev.data);
+        }
+    };
+
+    ws.onclose = () => {
+        setStatus(stream, "Disconnected – reconnecting…");
+        setDotState(stream, "disconnected");
+
+        if (st.manualClose) return;
+
+        st.reconnectAttempts += 1;
+        const delay = Math.min(
+            RECONNECT_BASE_DELAY_MS * Math.pow(2, st.reconnectAttempts - 1),
+            RECONNECT_MAX_DELAY_MS
+        );
+        setTimeout(() => {
+            connectStream(stream);
+        }, delay);
+    };
+
+    ws.onerror = () => {
+        setStatus(stream, "Error – reconnecting…");
+    };
+}
+
+function togglePauseStream(stream) {
+    const st = state[stream];
+    st.paused = !st.paused;
+
+    const btns = document.querySelectorAll(
+        `button[data-action="pause"][data-stream="${stream}"]`
+    );
+    btns.forEach(btn => {
+        btn.textContent = st.paused ? "▶ Resume" : "⏸ Pause";
+    });
+
+    if (st.paused || globalPaused) {
+        setStatus(stream, globalPaused ? "Connected (global paused)" : "Connected (paused)");
+        setDotState(stream, "paused");
+    } else {
+        setStatus(stream, "Connected");
+        setDotState(stream, "");
+    }
+}
+
+function clearStream(stream) {
+    const div = $(`log-${stream}`);
+    if (div) div.textContent = "";
+}
+
+// Global controls
+const globalPauseBtn = $("global-pause-btn");
+const globalClearBtn = $("global-clear-btn");
+const applyConfigBtn = $("apply-config");
+
+globalPauseBtn.addEventListener("click", () => {
+    globalPaused = !globalPaused;
+    globalPauseBtn.textContent = globalPaused ? "▶ Resume All" : "⏸ Pause All";
+    $("global-status").textContent = globalPaused ? "Paused" : "Live";
+    $("global-status").classList.toggle("ok", !globalPaused);
+    $("global-status").classList.toggle("err", globalPaused);
+
+    STREAM_NAMES.forEach(stream => {
+        const st = state[stream];
+        st.paused = globalPaused;
+        const btns = document.querySelectorAll(
+            `button[data-action="pause"][data-stream="${stream}"]`
+        );
+        btns.forEach(btn => {
+            btn.textContent = st.paused ? "▶ Resume" : "⏸ Pause";
+        });
+        if (st.paused) {
+            setStatus(stream, "Connected (paused)");
+            setDotState(stream, "paused");
+        } else {
+            setStatus(stream, "Connected");
+            setDotState(stream, "");
+        }
+    });
+});
+
+globalClearBtn.addEventListener("click", () => {
+    STREAM_NAMES.forEach(clearStream);
+});
+
+applyConfigBtn.addEventListener("click", () => {
+    const newHost = $("cfg-host").value.trim();
+    const newPort = parseInt($("cfg-port").value.trim(), 10);
+
+    if (!newHost || !newPort) {
+        alert("Invalid host or port");
+        return;
+    }
+
+    HOST = newHost;
+    PORT = newPort;
+
+    localStorage.setItem("echo-ws-host", HOST);
+    localStorage.setItem("echo-ws-port", PORT.toString());
+
+    $("ws-url").textContent =
+        `ws://${HOST}:${PORT}/[app|llm|trace|tools]`;
+
+    STREAM_NAMES.forEach(stream => {
+        const st = state[stream];
+        st.manualClose = true;
+        if (st.ws) {
+            try { st.ws.close(); } catch (_) {}
+        }
+    });
+
+    setTimeout(() => {
+        STREAM_NAMES.forEach(stream => {
+            const st = state[stream];
+            st.manualClose = false;
+            connectStream(stream);
+        });
+    }, 250);
+});
+
+// Card buttons: per-stream pause / clear
+document.body.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const stream = btn.dataset.stream;
+    if (!STREAM_NAMES.includes(stream)) return;
+
+    if (action === "pause") {
+        if (globalPaused) {
+            globalPauseBtn.click();
+        }
+        togglePauseStream(stream);
+    } else if (action === "clear") {
+        clearStream(stream);
+    }
+});
+
+// Initialize
+initConfig();
+STREAM_NAMES.forEach(connectStream);
+</script>
+
+</body>
+</html>
