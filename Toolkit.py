@@ -32,6 +32,7 @@ from PIL import ImageGrab, Image
 from io import BytesIO
 import subprocess
 import shlex
+import requests
 
 class AttrDict(dict):
   def __init__(self, *args, **kwargs):
@@ -64,7 +65,7 @@ def toolspec(**kwargs):
       except:
         pass
     func._toolspec = AttrDict({
-      'state'    : 'enabled',
+      'state'    : kwargs.get('state',"enabled"),
       'function' : func, 
       'spec'     : genToolspec(name = func.__name__, **kwargs),
       'source'   : source,
@@ -87,6 +88,7 @@ class Toolkit:
     self.module    = ModuleType("DynaToolKit")
     self._toolspec = AttrDict()
     self.logger    = logging.getLogger(f"echo.toolkit.{self.__class__.__name__}")
+    self.trace     = logging.getLogger("echo.trace")
     for name in dir(self):
       func = getattr(self, name)
       if not callable(func):
@@ -235,28 +237,35 @@ class Toolkit:
   def call(self, cid, func):
     ts_s = timer()
     self.logger.info("Tool call requested: %s", func.name)
+    self.trace.info("ACTION: LLM selected tool '%s' (tool_call_id=%s) (prop=%s)", func.name, cid, self._toolspec[func.name])
 
     res = "Error: Unknown error."
 
     if func.name not in self._toolspec:
       res = "Error: Function not found."
       self.logger.error("Tool %s not found", func.name)
+      self.trace.warning("ACTION: Tool '%s' not found", func.name)
     elif self._toolspec[func.name].state == "disabled":
       res = "Error: Function is disabled."
       self.logger.warning("Tool %s is disabled", func.name)
+      self.trace.info("ACTION: Tool '%s' is disabled, skipping call", func.name)
     else:
       try:
         args = json.loads(func.arguments)
         self.logger.info("Calling tool %s with args=%s", func.name, args)
+        self.trace.info("ACTION: Calling tool '%s' with args=%s", func.name, args)
         res = self._toolspec[func.name].function(**args)
         self.logger.info("Tool %s completed successfully", func.name)
+        self.trace.info("ACTION: Tool '%s' completed", func.name)
       except Exception as e:
         res = f"Error: <backtrace>\n{traceback.format_exc()}\n</backtrace>"
         self.logger.error("Tool %s raised exception: %s", func.name, e)
+        self.trace.error("ACTION: Tool '%s' raised exception: %s", func.name, e)
         print(res)
 
     ts_e = timer()
     self.logger.info("Tool %s finished in %.3fs", func.name, ts_e - ts_s)
+    self.trace.info("ACTION: Tool '%s' finished in %.3fs", func.name, ts_e - ts_s)
     print(f"... took {ts_e-ts_s}s")
 
     return {
@@ -265,6 +274,7 @@ class Toolkit:
       "name": func.name,
       "content": json.dumps({"result": res})
     }
+
   def fake(self,name,args='{}'):
     # Fake a tool call. Saves a model call while preserving context flow.
     # Use to pre-emptively inject data into history.
@@ -482,10 +492,11 @@ class BaseToolkit(Toolkit):
         file=f,
         response_format="text"
       )
-  @toolspec(desc="Get input from speech-to-text. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, audio")
+  @toolspec(desc="Get input from speech-to-text. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, audio", state = "disabled")
   def listen(self):
     if not self.enable_listen:
         return "{status: disabled, reason: 'Speech input disabled in .env'}"
+    self.trace.info("ACTION: Starting microphone capture for speech input.")
     if self.data.stt is None:
       rec = sr.Recognizer()
       mic = sr.Microphone()
@@ -498,25 +509,33 @@ class BaseToolkit(Toolkit):
       f.write(audio.get_wav_data(convert_rate=44100))
   @toolspec(desc="Get input from console. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, text, console")
   def read(self):
+    self.trace.info("ACTION: Reading text from console (input()).")
     return input()
   def input(self):
     text = None
     if 'listen' in self._toolspec and self._toolspec.listen.state == "enabled" and self.enable_listen:
+      self.trace.info("ACTION: Listening to your voice (speech-to-text).")
       self.listen()
       text = self.stt()
+      self.trace.info("ACTION: Transcribed your voice input.")
     else:
+      self.trace.info("ACTION: Waiting for your console text input.")
       text = self.read()
+      self.trace.info("ACTION: Received your text input from console.")
+
     self.data.prompt     = text
     self.data.screenshot = None
     self.data.clipboard  = None
-    # gather clipboard and screenshot at the time of prompt
-    # tool calls can take a moment and screen/clipboard can change in the meantime
+
+    self.trace.info("ACTION: Reading clipboard snapshot.")
     self.clipboardRead()
+    self.trace.info("ACTION: Capturing screenshot snapshot.")
     self.screenshot()
+
     return text
   def userPrompt(self):
     return self.data.prompt
-  
+
   @toolspec(
     desc = "Open URL in default web browser. Can be a local path with file:/// URL",
     args = {"url": {"type": "string", "description": "URL to be opened"}},
@@ -539,7 +558,8 @@ class BaseToolkit(Toolkit):
     desc = "Search the Internet. Returns top 10 results: {url, title, description}",
     args = {"phrase": {"type": "string",  "description": "Phrase to search for"},
             "limit":  {"type": "integer", "description": "Number of results. Default: 10"}},
-    reqs = ["phrase"]
+    reqs = ["phrase"],
+    state = "disabled",
   )
   def webSearch(self, phrase, limit=10):
     res = self.serpapi.search({'engine': 'google','q': phrase})
@@ -559,22 +579,24 @@ class BaseToolkit(Toolkit):
       """,
     args = {"text": {"type": "string", "description": "Text to be spoken. Keep short, one sentence."}},
     reqs = ["text"],
-    prompt = "When user says 'say','tell' etc use speak."
+    prompt = "When user says 'say','tell' etc use speak.",
+    state = "disabled"
   )
   def speak(self, text):
     if not self.enable_speak:
         return "{status: disabled, reason: 'Speech output disabled in .env'}"
+    self.trace.info("ACTION: Speaking short response via TTS.")
     threading.Thread(target=self.localtts, kwargs={'text': text}).start()
     return "{status: success}"
 
   def screenshot(self, title=None):
+    self.trace.info("ACTION: Capturing your screen (primary monitor).")
     with mss.mss() as sct:
       monitor = sct.monitors[1]  # 0 = all, 1 = primary
       img = sct.grab(monitor)
       img_pil = Image.frombytes("RGB", img.size, img.rgb)
       self.data.screenshot = img_pil
     return "{status: success}"
-
 
   def selectImage(self, image=None):
     if image is None:
@@ -641,11 +663,13 @@ class BaseToolkit(Toolkit):
     reqs = ["text"]
   )
   def clipboardWrite(self, text):
+    self.trace.info("ACTION: Writing text to your clipboard.")
     pyperclip.copy(text)
     return "{status: success}"
   
   @toolspec(desc="Read contents of users clipboard. Returns {status:<status>, type:<type of content>, content: <text content>}. Category: input, text, copy-paste")
   def clipboardRead(self):
+    self.trace.info("ACTION: Attempting to read your clipboard.")
     img = None
 
     # Try image clipboard first
@@ -953,6 +977,62 @@ class BaseToolkit(Toolkit):
       logger.warning("Install failed (rc=%s): %s", proc.returncode, cmd)
 
     return result
+
+
+  @toolspec(
+    desc = """
+      Search for vulnerabilities using a free CVE API (cve.circl.lu).
+      Returns structured CVE entries including CVE ID, summary, CVSS, references, etc.
+      """,
+    args = {
+      "query":  {"type": "string",  "description": "Product name, component or keyword (e.g. 'OpenSSH 8.2')."},
+      "limit":  {"type": "integer", "description": "Max number of CVEs to return (default 10)."}
+    },
+    reqs = ["query"],
+    prompt = "When the user wants concrete CVE IDs or structured vulnerability data, prefer vulnDbSearch."
+  )
+  def vulnDbSearch(self, query, limit=10):
+    try:
+      url = f"https://cve.circl.lu/api/search/{urllib.parse.quote(query)}"
+      resp = requests.get(url, timeout=20)
+
+      if resp.status_code != 200:
+        return json.dumps({
+          "status": "error",
+          "error": f"cve.circl.lu HTTP {resp.status_code}: {resp.text[:200]}"
+        })
+
+      data = resp.json()
+      raw_results = data.get("results", []) or []
+
+      raw_results = raw_results[:int(limit)]
+
+      results = []
+      for cve in raw_results:
+        results.append({
+          "id": cve.get("id") or cve.get("cve"),
+          "summary": cve.get("summary"),
+          "cvss": cve.get("cvss"),
+          "published": cve.get("Published"),
+          "modified": cve.get("Modified"),
+          "references": cve.get("references"),
+          "vulnerable_configuration": cve.get("vulnerable_configuration"),
+        })
+
+      return json.dumps({
+        "status": "success",
+        "engine": "cve.circl.lu",
+        "query": query,
+        "count": len(results),
+        "results": results
+      })
+
+    except Exception as e:
+      return json.dumps({
+        "status": "error",
+        "error": f"Exception in vulnDbSearch: {str(e)}"
+      })
+
   @toolspec(
     desc = "Enable or disable remembering previous conversation turns when answering. When disabled, only the latest user prompt is sent to the model.",
     args = {

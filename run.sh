@@ -21,6 +21,7 @@ mkdir -p "$LOG_DIR"
 IMPORTANT_LOG="$LOG_DIR/important.log"
 LLM_LOG="$LOG_DIR/llm.log"
 OTHER_LOG="$LOG_DIR/other.log"
+TRACE_LOG="$LOG_DIR/trace.log"
 
 SHOW_EXTRA_WINDOWS="${SHOW_EXTRA_WINDOWS:-true}"
 
@@ -68,6 +69,9 @@ if [ "$SHOW_EXTRA_WINDOWS" = "true" ]; then
   start_tail_for "IMPORTANT LOG (INFO+)" "$IMPORTANT_LOG"
   start_tail_for "LLM LOG (requests/responses)" "$LLM_LOG"
   start_tail_for "OTHER LOG (DEBUG+ app/tool)" "$OTHER_LOG"
+  start_tail_for "TRACE LOG (actions/flow)" "$TRACE_LOG"
+else
+  echo "Extra windows disabled. Logs only saved to file."
 fi
 
 # ---------------------------------------------------

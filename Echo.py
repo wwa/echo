@@ -39,6 +39,7 @@ def estimate_tokens_from_messages(messages):
 
 def modelOne(toolkit, messages):
     logger = logging.getLogger("echo.llm")
+    trace = logging.getLogger("echo.trace")
     ts_s = timer()
 
     # Log request
@@ -50,6 +51,8 @@ def modelOne(toolkit, messages):
         logger.exception("Failed logging LLM request")
         traceback.print_exc()
     print("Prompting...")
+    #trace.info("ACTION: Sending prompt to LLM (model=%s).", toolkit.openai_chat_model)
+    trace.info("ACTION: Sending prompt to LLM.")
 
     res = toolkit.openai.chat.completions.create(
         model    = toolkit.openai_chat_model,
@@ -59,6 +62,8 @@ def modelOne(toolkit, messages):
     )
 
     ts_e = timer()
+    #trace.info("ACTION: LLM responded with finish_reason='%s'.", reason)
+    trace.info("ACTION: LLM responded with finish_reason.")
     print(f"... took {ts_e-ts_s}s")
 
     # Log response
@@ -84,6 +89,8 @@ def modelOne(toolkit, messages):
     return reason, None, messages
 
 def modelLoop(toolkit, history=[]):
+  trace = logging.getLogger("echo.trace")
+
   # Determine which history messages will be used
   if getattr(toolkit, "chain_enabled", True):
     history_messages = sum(history, [])
@@ -130,6 +137,8 @@ def modelLoop(toolkit, history=[]):
 
   content = None
   while True:
+    #trace.info("ACTION: Starting new LLM turn with %d history messages.", len(history_messages))
+    trace.info("ACTION: Starting new LLM turn.")
     reason, content, messages = modelOne(toolkit, messages)
     if reason == "stop":
       break
@@ -270,6 +279,10 @@ if __name__ == "__main__":
     llm_handler.setLevel(logging.DEBUG)
     llm_handler.setFormatter(formatter)
 
+    trace_handler = logging.FileHandler(os.path.join(LOG_DIR, "trace.log"))
+    trace_handler.setLevel(logging.DEBUG)
+    trace_handler.setFormatter(formatter)
+
     # echo.* logger (app + toolkit)
     echo_logger = logging.getLogger("echo")
     echo_logger.setLevel(logging.DEBUG)
@@ -284,6 +297,13 @@ if __name__ == "__main__":
     llm_logger.handlers.clear()
     llm_logger.addHandler(llm_handler)          # llm.log (DEBUG+)
     llm_logger.propagate = False
+
+    # echo.trace logger (high-level action/flow log)
+    trace_logger = logging.getLogger("echo.trace")
+    trace_logger.setLevel(logging.DEBUG)
+    trace_logger.handlers.clear()
+    trace_logger.addHandler(trace_handler)      # trace.log (DEBUG+)
+    trace_logger.propagate = False
 
     logger = logging.getLogger("echo")
     logger.info("Starting ECHO...")
