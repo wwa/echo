@@ -238,7 +238,9 @@ class Toolkit:
     ts_s = timer()
     self.logger.info("Tool call requested: %s", func.name)
     #self.trace.info("ACTION: LLM selected tool '%s' (tool_call_id=%s) (prop=%s)", func.name, cid, self._toolspec[func.name])
-    self.trace.info("ACTION: LLM selected tool '%s' (tool_call_id=%s) (prop=%s)", func.name, cid)
+    self.trace.info(
+      f"ACTION: LLM selected tool '{func.name}' (tool_call_id={cid}) (args={getattr(func, 'arguments', None)})"
+    )
 
     res = "Error: Unknown error."
 
@@ -256,8 +258,8 @@ class Toolkit:
         self.logger.info("Calling tool %s with args=%s", func.name, args)
         self.trace.info("ACTION: Calling tool '%s' with args=%s", func.name, args)
         res = self._toolspec[func.name].function(**args)
-        self.logger.info("Tool %s completed successfully", func.name)
-        self.trace.info("ACTION: Tool '%s' completed", func.name)
+        self.logger.info("Tool %s completed successfully.", func.name)
+        self.trace.info("ACTION: Tool '%s' completed.", func.name)
       except Exception as e:
         res = f"Error: <backtrace>\n{traceback.format_exc()}\n</backtrace>"
         self.logger.error("Tool %s raised exception: %s", func.name, e)
