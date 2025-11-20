@@ -237,7 +237,8 @@ class Toolkit:
   def call(self, cid, func):
     ts_s = timer()
     self.logger.info("Tool call requested: %s", func.name)
-    self.trace.info("ACTION: LLM selected tool '%s' (tool_call_id=%s) (prop=%s)", func.name, cid, self._toolspec[func.name])
+    #self.trace.info("ACTION: LLM selected tool '%s' (tool_call_id=%s) (prop=%s)", func.name, cid, self._toolspec[func.name])
+    self.trace.info("ACTION: LLM selected tool '%s' (tool_call_id=%s) (prop=%s)", func.name, cid)
 
     res = "Error: Unknown error."
 
