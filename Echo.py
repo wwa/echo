@@ -183,6 +183,26 @@ def promptOption(prompt, history, helpText, toolkit):
     else:
       print("Usage: chain on|off")
     loopBehav = "continue"
+  elif prompt.lower().startswith("profile "):
+    parts = prompt.split()
+    if len(parts) >= 2:
+      profile = parts[1].lower()
+      if hasattr(toolkit, "_apply_model_profile"):
+        ok = toolkit._apply_model_profile(profile)
+        if ok:
+          print(f"Model profile switched to '{profile}'.")
+          print("Active models:")
+          print(f"  chat    : {toolkit.openai_chat_model}")
+          print(f"  vision  : {toolkit.openai_vision_model}")
+          print(f"  research: {toolkit.openai_research_model}")
+          print(f"  stt     : {toolkit.openai_stt_model}")
+        else:
+          print(f"Unknown profile '{profile}'. Available: {', '.join(toolkit.model_profiles.keys())}")
+      else:
+        print("Toolkit does not support model profiles.")
+    else:
+      print("Usage: profile <name>, e.g. 'profile legacy' or 'profile current'")
+    loopBehav = "continue"
 
   return loopBehav
 
@@ -194,7 +214,8 @@ def mainLoop(toolkit, limit=10):
     "Type 'clear' to clear history. \n"
     "Type 'reset' to reset all tools. \n\n"
     "Type 'chain on/off' to enable or disable conversation history chaining. \n"
-    "Type 'log LEVEL' to change log verbose lvl. \n\n"
+    "Type 'log LEVEL' to change log verbose lvl. \n"
+    "Type 'profile NAME' to switch LLM model profile, e.g. 'profile legacy' or 'profile current'. \n\n"
     "Type 'exit' to quit if you need rest. \n\n")
 
 
@@ -226,8 +247,11 @@ if __name__ == "__main__":
     os.makedirs(LOG_DIR, exist_ok=True)
 
     # root logger
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, level_name, logging.INFO)
+
     root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
+    root.setLevel(log_level)
     root.handlers.clear()
 
     log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

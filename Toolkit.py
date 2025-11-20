@@ -103,13 +103,40 @@ class Toolkit:
     self.enable_speak = os.getenv("ENABLE_SPEAK", "false").lower() == "true"
 
     # --- OpenAI config from .env ---
-    self.openai_api_key    = os.getenv("OPENAI_API_KEY")
+    self.openai_api_key  = os.getenv("OPENAI_API_KEY")
     self.openai_base_url = os.getenv("OPENAI_BASE_URL")
 
-    self.openai_chat_model     = os.getenv("OPENAI_CHAT_MODEL", "gpt-4-turbo-preview")
-    self.openai_vision_model   = os.getenv("OPENAI_VISION_MODEL", "gpt-4-vision-preview")
-    self.openai_research_model = os.getenv("OPENAI_RESEARCH_MODEL", self.openai_chat_model)
-    self.openai_stt_model      = os.getenv("OPENAI_STT_MODEL", "whisper-1")
+    # --- Base model values (used for 'current' profile by default) ---
+    default_chat     = os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
+    default_vision   = os.getenv("OPENAI_VISION_MODEL", "gpt-5.0")
+    default_research = os.getenv("OPENAI_RESEARCH_MODEL", "gpt-5.1")
+    default_stt      = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
+
+    # Store active values (will be overridden by profile)
+    self.openai_chat_model     = default_chat
+    self.openai_vision_model   = default_vision
+    self.openai_research_model = default_research
+    self.openai_stt_model      = default_stt
+
+    # --- Named model profiles (template sets) ---
+    # You can extend this dict with more profiles later.
+    self.model_profiles = {
+      "legacy": {
+        "chat":     os.getenv("OPENAI_CHAT_MODEL_LEGACY", "gpt-4-turbo-preview"),
+        "vision":   os.getenv("OPENAI_VISION_MODEL_LEGACY", "gpt-4-vision-preview"),
+        "research": os.getenv("OPENAI_RESEARCH_MODEL_LEGACY", "gpt-4-turbo-preview"),
+        "stt":      os.getenv("OPENAI_STT_MODEL_LEGACY", "whisper-1"),
+      },
+      "current": {
+        "chat":     os.getenv("OPENAI_CHAT_MODEL_CURRENT",  default_chat),
+        "vision":   os.getenv("OPENAI_VISION_MODEL_CURRENT", default_vision),
+        "research": os.getenv("OPENAI_RESEARCH_MODEL_CURRENT", default_research),
+        "stt":      os.getenv("OPENAI_STT_MODEL_CURRENT",    default_stt),
+      },
+    }
+
+    # Select starting profile from env, default 'current'
+    self.current_model_profile = os.getenv("OPENAI_MODEL_PROFILE", "current").lower()
 
     client_kwargs = {}
     if self.openai_api_key:
@@ -121,6 +148,13 @@ class Toolkit:
       self.openai = OpenAI(**client_kwargs)
     else:
       self.openai = None
+
+    # Apply selected profile at startup
+    try:
+      self._apply_model_profile(self.current_model_profile)
+    except Exception:
+      self.logger.exception("Failed to apply model profile '%s'", self.current_model_profile)
+
 
   def reset(self):
     print("Resetting Toolkit")
@@ -369,6 +403,67 @@ class Toolkit:
       "service": svc,
       "persisted": persisted
     })
+
+  def _apply_model_profile(self, profile_name: str) -> bool:
+    """
+    Internal helper: apply a named model profile ('legacy', 'current', etc.).
+    Updates chat/vision/research/stt model fields.
+    """
+    profile_key = profile_name.strip().lower()
+    if profile_key not in self.model_profiles:
+      self.logger.warning("Unknown model profile '%s'", profile_name)
+      return False
+
+    prof = self.model_profiles[profile_key]
+
+    # Only set if present in profile
+    if "chat" in prof:
+      self.openai_chat_model = prof["chat"]
+    if "vision" in prof:
+      self.openai_vision_model = prof["vision"]
+    if "research" in prof:
+      self.openai_research_model = prof["research"]
+    if "stt" in prof:
+      self.openai_stt_model = prof["stt"]
+
+    self.current_model_profile = profile_key
+    self.logger.info(
+      "Switched model profile to '%s' (chat=%s, vision=%s, research=%s, stt=%s)",
+      profile_key,
+      self.openai_chat_model,
+      self.openai_vision_model,
+      self.openai_research_model,
+      self.openai_stt_model,
+    )
+    return True
+
+  @toolspec(
+    desc="Switch between predefined LLM model profiles (e.g. 'legacy', 'current'). "
+         "Each profile sets chat/vision/research/STT models as a bundle.",
+    args={
+      "profile": {
+        "type": "string",
+        "description": "Name of the model profile to activate, e.g. 'legacy' or 'current'."
+      }
+    },
+    reqs=["profile"]
+  )
+  def setModelProfile(self, profile):
+    ok = self._apply_model_profile(profile)
+    if not ok:
+      return {
+        "status": "error",
+        "error": f"Unknown profile '{profile}'. Available: {list(self.model_profiles.keys())}"
+      }
+    return {
+      "status": "success",
+      "profile": self.current_model_profile,
+      "chat_model": self.openai_chat_model,
+      "vision_model": self.openai_vision_model,
+      "research_model": self.openai_research_model,
+      "stt_model": self.openai_stt_model,
+    }
+
   
 class BaseToolkit(Toolkit):
   # Contains basic user communication functions
