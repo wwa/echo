@@ -12,6 +12,8 @@ dotenv==0.9.9
 EWMHlib==0.2
 feedparser==6.0.12
 filelock==3.20.0
+gevent==25.9.1
+greenlet==3.2.4
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
@@ -62,5 +64,9 @@ tqdm==4.67.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 urllib3==2.5.0
+websocket==0.2.1
+websockets==15.0.1
 wheel==0.45.1
 xlsxwriter==3.2.9
+zope.event==6.1
+zope.interface==8.1.1
