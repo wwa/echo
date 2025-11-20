@@ -101,6 +101,7 @@ class Toolkit:
     load_dotenv()
 
     self.shodan_api_key = os.getenv("SHODAN_API_KEY", "Missing Key")
+    self.nvd_api_key = os.getenv("NVD_API_KEY")
     self.enable_listen = os.getenv("ENABLE_LISTEN", "false").lower() == "true"
     self.enable_speak = os.getenv("ENABLE_SPEAK", "false").lower() == "true"
 
@@ -984,47 +985,105 @@ class BaseToolkit(Toolkit):
 
   @toolspec(
     desc = """
-      Search for vulnerabilities using a free CVE API (cve.circl.lu).
-      Returns structured CVE entries including CVE ID, summary, CVSS, references, etc.
+      Search for vulnerabilities using the NVD (National Vulnerability Database) CVE API v2.0.
+      Returns structured CVE entries including CVE ID, summary, CVSS, dates and references.
       """,
     args = {
-      "query":  {"type": "string",  "description": "Product name, component or keyword (e.g. 'OpenSSH 8.2')."},
+      "query":  {"type": "string",  "description": "Keyword to search in CVE descriptions / references (e.g. 'wordpress')."},
       "limit":  {"type": "integer", "description": "Max number of CVEs to return (default 10)."}
     },
     reqs = ["query"],
-    prompt = "When the user wants concrete CVE IDs or structured vulnerability data, prefer vulnDbSearch."
+    prompt = "When the user wants concrete CVE IDs or structured vulnerability data, prefer vulnDbSearch (NVD)."
   )
   def vulnDbSearch(self, query, limit=10):
+    import requests
+
+    # sanitize limit
     try:
-      url = f"https://cve.circl.lu/api/search/{urllib.parse.quote(query)}"
-      resp = requests.get(url, timeout=20)
+      limit = int(limit)
+    except Exception:
+      limit = 10
+    # NVD allows up to 2000 per page, but we keep it small
+    limit = max(1, min(limit, 50))
+
+    params = {
+      "keywordSearch": query,
+      "resultsPerPage": limit,
+    }
+
+    headers = {}
+    if getattr(self, "nvd_api_key", None):
+      headers["apiKey"] = self.nvd_api_key
+
+    try:
+      resp = requests.get(
+        "https://services.nvd.nist.gov/rest/json/cves/2.0",
+        params=params,
+        headers=headers,
+        timeout=20
+      )
 
       if resp.status_code != 200:
         return json.dumps({
           "status": "error",
-          "error": f"cve.circl.lu HTTP {resp.status_code}: {resp.text[:200]}"
+          "engine": "nvd.nist.gov",
+          "error": f"NVD HTTP {resp.status_code}: {resp.text[:200]}"
         })
 
       data = resp.json()
-      raw_results = data.get("results", []) or []
-
-      raw_results = raw_results[:int(limit)]
+      vulns = data.get("vulnerabilities", []) or []
 
       results = []
-      for cve in raw_results:
+      for item in vulns:
+        c = item.get("cve", {}) or {}
+        cve_id = c.get("id")
+
+        # Description (prefer English)
+        summary = None
+        for d in c.get("descriptions", []) or []:
+          if d.get("lang") == "en":
+            summary = d.get("value")
+            break
+        if not summary and c.get("descriptions"):
+          summary = c["descriptions"][0].get("value")
+
+        # Dates
+        published = c.get("published")
+        modified  = c.get("lastModified")
+
+        # References
+        refs = []
+        refs_obj = c.get("references") or {}
+        for r in refs_obj.get("reference_data", []) or []:
+          url = r.get("url")
+          if url:
+            refs.append(url)
+
+        # CVSS metrics (v3.1, v3.0, then v2 as fallback)
+        cvss_score    = None
+        cvss_severity = None
+        metrics = c.get("metrics") or {}
+        for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+          arr = metrics.get(key)
+          if arr:
+            m = arr[0].get("cvssData") or arr[0]
+            cvss_score    = m.get("baseScore")
+            cvss_severity = m.get("baseSeverity") or m.get("severity")
+            break
+
         results.append({
-          "id": cve.get("id") or cve.get("cve"),
-          "summary": cve.get("summary"),
-          "cvss": cve.get("cvss"),
-          "published": cve.get("Published"),
-          "modified": cve.get("Modified"),
-          "references": cve.get("references"),
-          "vulnerable_configuration": cve.get("vulnerable_configuration"),
+          "id": cve_id,
+          "summary": summary,
+          "cvss_score": cvss_score,
+          "cvss_severity": cvss_severity,
+          "published": published,
+          "modified": modified,
+          "references": refs,
         })
 
       return json.dumps({
         "status": "success",
-        "engine": "cve.circl.lu",
+        "engine": "nvd.nist.gov",
         "query": query,
         "count": len(results),
         "results": results
@@ -1033,6 +1092,7 @@ class BaseToolkit(Toolkit):
     except Exception as e:
       return json.dumps({
         "status": "error",
+        "engine": "nvd.nist.gov",
         "error": f"Exception in vulnDbSearch: {str(e)}"
       })
 
