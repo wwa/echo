@@ -886,16 +886,17 @@ class BaseToolkit(Toolkit):
   @toolspec(
     desc=(
       "Search Exploit-DB (exploit-db.com) for exploits by keyword or CVE. "
-      "Returns results with id, description, type, platform, date, verified flag, and link."
+      "Returns a list of exploits with id, description, type, platform, date, "
+      "verified flag, port, tags, author, and link. Uses pyxploitdb."
     ),
     args={
       "query": {
         "type": "string",
-        "description": "Search term or CVE (e.g. 'CVE-2021-44228', 'wordpress', 'openssl')."
+        "description": "Search term (product, version, or CVE like 'CVE-2021-44228')."
       },
       "limit": {
         "type": "integer",
-        "description": "Max number of results to return (default 10)."
+        "description": "Maximum number of results to return (default 10)."
       }
     },
     reqs=["query"]
@@ -908,30 +909,29 @@ class BaseToolkit(Toolkit):
       })
 
     try:
-      # ✔️ Correct function for current pyxploitdb
-      results = pyxploitdb.search(query, limit)
+      # ✅ Correct call for this library: searchEDB (camelCase)
+      results = pyxploitdb.searchEDB(query, _print=False, nb_results=limit)
 
-      out = []
+      payload = []
       for e in results:
-        out.append({
+        payload.append({
           "id": getattr(e, "id", None),
           "description": getattr(e, "description", None),
           "type": getattr(e, "type", None),
           "platform": getattr(e, "platform", None),
-          "date": getattr(e, "date", None),
-          "author": getattr(e, "author", None),
-          "port": getattr(e, "port", None),
+          "date_published": getattr(e, "date_published", None),
           "verified": getattr(e, "verified", None),
-          "tags": getattr(e, "tags", None),
-          "link": getattr(e, "link", None)
+          "port": getattr(e, "port", None),
+          "tags": getattr(e, "tag_if_any", None),
+          "author": getattr(e, "author", None),
+          "link": getattr(e, "link", None),
         })
 
       return json.dumps({
         "status": "success",
         "query": query,
-        "results": out
+        "results": payload
       })
-
     except Exception as ex:
       return json.dumps({
         "status": "error",
@@ -942,7 +942,7 @@ class BaseToolkit(Toolkit):
     desc=(
       "Search Exploit-DB specifically by CVE identifier "
       "(e.g. 'CVE-2006-1234', 'CVE-2021-44228'). "
-      "Thin wrapper around exploitdbSearch for convenience."
+      "Uses pyxploitdb.searchCVE under the hood."
     ),
     args={
       "cve": {
@@ -957,11 +957,42 @@ class BaseToolkit(Toolkit):
     reqs=["cve"]
   )
   def exploitdbSearchCVE(self, cve, limit=10):
-    """
-    Convenience wrapper to search Exploit-DB by CVE.
-    """
-    # Just delegate to exploitdbSearch with the CVE as query
-    return self.exploitdbSearch(cve, limit=limit)
+    if pyxploitdb is None:
+      return json.dumps({
+        "status": "error",
+        "error": "pyxploitdb not installed; run `pip install pyxploitdb`"
+      })
+
+    try:
+      results = pyxploitdb.searchCVE(cve, _print=False)
+      # searchCVE may return more than we want; truncate
+      results = results[:limit]
+
+      payload = []
+      for e in results:
+        payload.append({
+          "id": getattr(e, "id", None),
+          "description": getattr(e, "description", None),
+          "type": getattr(e, "type", None),
+          "platform": getattr(e, "platform", None),
+          "date_published": getattr(e, "date_published", None),
+          "verified": getattr(e, "verified", None),
+          "port": getattr(e, "port", None),
+          "tags": getattr(e, "tag_if_any", None),
+          "author": getattr(e, "author", None),
+          "link": getattr(e, "link", None),
+        })
+
+      return json.dumps({
+        "status": "success",
+        "cve": cve,
+        "results": payload
+      })
+    except Exception as ex:
+      return json.dumps({
+        "status": "error",
+        "error": f"Exploit-DB CVE search failed: {ex}"
+      })
   @toolspec(
     desc=(
       "Query the U.S. National Vulnerability Database (NVD) for vulnerabilities. "
