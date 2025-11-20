@@ -1,4 +1,3 @@
-#pip freeze > requirements.txt
 annotated-types==0.7.0
 anyio==4.11.0
 arxiv==2.3.0
@@ -18,6 +17,8 @@ httpcore==1.0.9
 httpx==0.28.1
 idna==3.11
 jiter==0.11.1
+markdown-it-py==4.0.0
+mdurl==0.1.2
 MouseInfo==0.1.3
 mss==10.1.0
 openai==2.7.1
@@ -29,6 +30,7 @@ PyAutoGUI==0.9.54
 pydantic==2.12.4
 pydantic_core==2.41.5
 PyGetWindow==0.0.9
+Pygments==2.19.2
 PyMonCtl==0.92
 PyMsgBox==2.0.1
 pyperclip==1.11.0
@@ -42,8 +44,10 @@ pyttsx3==2.99
 pytweening==1.2.0
 PyWinBox==0.7
 PyWinCtl==0.4.1
+pyxploitdb==2.0
 requests==2.32.5
 requests-file==3.0.1
+rich==14.2.0
 serpapi==0.1.5
 setuptools==80.9.0
 sgmllib3k==1.0.0

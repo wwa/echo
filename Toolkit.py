@@ -33,6 +33,7 @@ from io import BytesIO
 import subprocess
 import shlex
 import requests
+import pyxploitdb
 
 class AttrDict(dict):
   def __init__(self, *args, **kwargs):
@@ -84,11 +85,12 @@ def b64(img):
 class Toolkit:
   # Contains toolkit barebones
   def __init__(self):
-    self.data      = AttrDict()
-    self.module    = ModuleType("DynaToolKit")
-    self._toolspec = AttrDict()
-    self.logger    = logging.getLogger(f"echo.toolkit.{self.__class__.__name__}")
-    self.trace     = logging.getLogger("echo.trace")
+    self.data             = AttrDict()
+    self.module           = ModuleType("DynaToolKit")
+    self._toolspec        = AttrDict()
+    self.logger           = logging.getLogger(f"echo.toolkit.{self.__class__.__name__}")
+    self.trace            = logging.getLogger("echo.trace")
+    self.echo_toolkit     = logging.getLogger("echo.toolkit")
     for name in dir(self):
       func = getattr(self, name)
       if not callable(func):
@@ -258,6 +260,7 @@ class Toolkit:
         args = json.loads(func.arguments)
         self.logger.info("Calling tool %s with args=%s", func.name, args)
         self.trace.info("ACTION: Calling tool '%s' with args=%s", func.name, args)
+        self.echo_toolkit.info("Tool %s Output:\n %s", func.name, args)
         res = self._toolspec[func.name].function(**args)
         self.logger.info("Tool %s completed successfully.", func.name)
         self.trace.info("ACTION: Tool '%s' completed.", func.name)
@@ -272,12 +275,17 @@ class Toolkit:
     self.trace.info("ACTION: Tool '%s' finished in %.3fs", func.name, ts_e - ts_s)
     print(f"... took {ts_e-ts_s}s")
 
-    return {
+
+    output = {
       "role": "tool",
       "tool_call_id": cid,
       "name": func.name,
       "content": json.dumps({"result": res})
     }
+
+    self.echo_toolkit.info("Tool %s Output:\n %s", func.name, output)
+
+    return output
 
   def fake(self,name,args='{}'):
     # Fake a tool call. Saves a model call while preserving context flow.
@@ -876,6 +884,205 @@ class BaseToolkit(Toolkit):
       "level": lvl_str
     }
   @toolspec(
+    desc=(
+      "Search Exploit-DB (exploit-db.com) for exploits by keyword or CVE. "
+      "Returns a list of exploits with id, description, type, platform, date, "
+      "verified flag, port, tags, author, and link. "
+      "Uses the third-party 'pyxploitdb' library (unofficial API)."
+    ),
+    args={
+      "query": {
+        "type": "string",
+        "description": "Search term (can be product name, version, or CVE like 'CVE-2021-44228')."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of results to return (default 10)."
+      }
+    },
+    reqs=["query"]
+  )
+  def exploitdbSearch(self, query, limit=10):
+    """
+    Generic Exploit-DB search via pyxploitdb.search_edb().
+    """
+    if pyxploitdb is None:
+      return json.dumps({
+        "status": "error",
+        "error": (
+          "pyxploitdb is not installed. Install it with "
+          "`pip install pyxploitdb` or via the installSoftware tool."
+        )
+      })
+
+    try:
+      # pyxploitdb.search_edb returns a list of Exploit objects
+      results = pyxploitdb.search_edb(query, print_=False, nb_results=limit)
+      payload = []
+      for e in results:
+        payload.append({
+          "id": getattr(e, "id_", getattr(e, "id", None)),
+          "description": getattr(e, "description", None),
+          "type": getattr(e, "type_", None),
+          "platform": getattr(e, "platform", None),
+          "date_published": getattr(e, "date_published", None),
+          "verified": getattr(e, "verified", None),
+          "port": getattr(e, "port", None),
+          "tags": getattr(e, "tag_if_any", None),
+          "author": getattr(e, "author", None),
+          "link": getattr(e, "link", None),
+        })
+
+      return json.dumps({
+        "status": "success",
+        "query": query,
+        "results": payload
+      })
+    except Exception as ex:
+      return json.dumps({
+        "status": "error",
+        "error": f"Exploit-DB search failed: {ex}"
+      })
+
+  @toolspec(
+    desc=(
+      "Search Exploit-DB specifically by CVE identifier "
+      "(e.g. 'CVE-2006-1234', 'CVE-2021-44228'). "
+      "Thin wrapper around exploitdbSearch for convenience."
+    ),
+    args={
+      "cve": {
+        "type": "string",
+        "description": "CVE identifier to search for."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of results (default 10)."
+      }
+    },
+    reqs=["cve"]
+  )
+  def exploitdbSearchCVE(self, cve, limit=10):
+    """
+    Convenience wrapper to search Exploit-DB by CVE.
+    """
+    # Just delegate to exploitdbSearch with the CVE as query
+    return self.exploitdbSearch(cve, limit=limit)
+  @toolspec(
+    desc=(
+      "Query the U.S. National Vulnerability Database (NVD) for vulnerabilities. "
+      "Supports keyword, CVE ID, product name, vendor name, etc. "
+      "Requires NVD_API_KEY in .env. Returns normalized list of CVE records."
+    ),
+    args={
+      "query": {
+        "type": "string",
+        "description": "Search string or CVE ID (e.g., 'Apache', 'OpenSSL', 'CVE-2021-44228')."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of results to return (default 10)."
+      }
+    },
+    reqs=["query"]
+  )
+  def nvdSearch(self, query, limit=10):
+    """
+    Search NVD (National Vulnerability Database) using API v2.
+    """
+    api_key = self.nvd_api_key
+    if not api_key:
+      return json.dumps({
+        "status": "error",
+        "error": "NVD_API_KEY not set in .env"
+      })
+
+    base = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    params = {
+      "keywordSearch": query,
+      "resultsPerPage": limit,
+      "apiKey": api_key
+    }
+
+    try:
+      res = requests.get(base, params=params, timeout=12)
+      res.raise_for_status()
+      data = res.json()
+
+      out = []
+      for v in data.get("vulnerabilities", []):
+        cve = v.get("cve", {})
+
+        out.append({
+          "id": cve.get("id"),
+          "published": cve.get("published"),
+          "lastModified": cve.get("lastModified"),
+          "description": self._extractNvdDescription(cve),
+          "cvss": self._extractNvdCvss(cve),
+          "weaknesses": self._extractNvdWeaknesses(cve),
+          "references": self._extractNvdReferences(cve)
+        })
+
+      return json.dumps({
+        "status": "success",
+        "query": query,
+        "results": out
+      })
+
+    except Exception as ex:
+      return json.dumps({
+        "status": "error",
+        "error": f"NVD query failed: {ex}"
+      })
+
+
+  # ---- helper methods -------
+  def _extractNvdDescription(self, cve):
+    descs = cve.get("descriptions", [])
+    for d in descs:
+      if d.get("lang") == "en":
+        return d.get("value")
+    return None
+
+  def _extractNvdCvss(self, cve):
+    metrics = cve.get("metrics", {})
+    if "cvssMetricV31" in metrics:
+      item = metrics["cvssMetricV31"][0]
+      return {
+        "baseScore": item["cvssData"]["baseScore"],
+        "vector": item["cvssData"]["vectorString"]
+      }
+    if "cvssMetricV30" in metrics:
+      item = metrics["cvssMetricV30"][0]
+      return {
+        "baseScore": item["cvssData"]["baseScore"],
+        "vector": item["cvssData"]["vectorString"]
+      }
+    if "cvssMetricV2" in metrics:
+      item = metrics["cvssMetricV2"][0]
+      return {
+        "baseScore": item["cvssData"]["baseScore"],
+        "vector": item["cvssData"]["vectorString"]
+      }
+    return None
+
+  def _extractNvdWeaknesses(self, cve):
+    entries = []
+    for w in cve.get("weaknesses", []):
+      for desc in w.get("description", []):
+        entries.append(desc.get("value"))
+    return entries
+
+  def _extractNvdReferences(self, cve):
+    refs = []
+    for r in cve.get("references", []):
+      refs.append({
+        "url": r.get("url"),
+        "source": r.get("source"),
+        "tags": r.get("tags")
+      })
+    return refs
+  @toolspec(
     desc = """
       Install software using a system package manager.
       Supported managers: apt, apt-get, gem, pip, pip3, npm, dnf, yum, pacman.
@@ -981,120 +1188,6 @@ class BaseToolkit(Toolkit):
       logger.warning("Install failed (rc=%s): %s", proc.returncode, cmd)
 
     return result
-
-
-  @toolspec(
-    desc = """
-      Search for vulnerabilities using the NVD (National Vulnerability Database) CVE API v2.0.
-      Returns structured CVE entries including CVE ID, summary, CVSS, dates and references.
-      """,
-    args = {
-      "query":  {"type": "string",  "description": "Keyword to search in CVE descriptions / references (e.g. 'wordpress')."},
-      "limit":  {"type": "integer", "description": "Max number of CVEs to return (default 10)."}
-    },
-    reqs = ["query"],
-    prompt = "When the user wants concrete CVE IDs or structured vulnerability data, prefer vulnDbSearch (NVD)."
-  )
-  def vulnDbSearch(self, query, limit=10):
-    import requests
-
-    # sanitize limit
-    try:
-      limit = int(limit)
-    except Exception:
-      limit = 10
-    # NVD allows up to 2000 per page, but we keep it small
-    limit = max(1, min(limit, 50))
-
-    params = {
-      "keywordSearch": query,
-      "resultsPerPage": limit,
-    }
-
-    headers = {}
-    if getattr(self, "nvd_api_key", None):
-      headers["apiKey"] = self.nvd_api_key
-
-    try:
-      resp = requests.get(
-        "https://services.nvd.nist.gov/rest/json/cves/2.0",
-        params=params,
-        headers=headers,
-        timeout=20
-      )
-
-      if resp.status_code != 200:
-        return json.dumps({
-          "status": "error",
-          "engine": "nvd.nist.gov",
-          "error": f"NVD HTTP {resp.status_code}: {resp.text[:200]}"
-        })
-
-      data = resp.json()
-      vulns = data.get("vulnerabilities", []) or []
-
-      results = []
-      for item in vulns:
-        c = item.get("cve", {}) or {}
-        cve_id = c.get("id")
-
-        # Description (prefer English)
-        summary = None
-        for d in c.get("descriptions", []) or []:
-          if d.get("lang") == "en":
-            summary = d.get("value")
-            break
-        if not summary and c.get("descriptions"):
-          summary = c["descriptions"][0].get("value")
-
-        # Dates
-        published = c.get("published")
-        modified  = c.get("lastModified")
-
-        # References
-        refs = []
-        refs_obj = c.get("references") or {}
-        for r in refs_obj.get("reference_data", []) or []:
-          url = r.get("url")
-          if url:
-            refs.append(url)
-
-        # CVSS metrics (v3.1, v3.0, then v2 as fallback)
-        cvss_score    = None
-        cvss_severity = None
-        metrics = c.get("metrics") or {}
-        for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
-          arr = metrics.get(key)
-          if arr:
-            m = arr[0].get("cvssData") or arr[0]
-            cvss_score    = m.get("baseScore")
-            cvss_severity = m.get("baseSeverity") or m.get("severity")
-            break
-
-        results.append({
-          "id": cve_id,
-          "summary": summary,
-          "cvss_score": cvss_score,
-          "cvss_severity": cvss_severity,
-          "published": published,
-          "modified": modified,
-          "references": refs,
-        })
-
-      return json.dumps({
-        "status": "success",
-        "engine": "nvd.nist.gov",
-        "query": query,
-        "count": len(results),
-        "results": results
-      })
-
-    except Exception as e:
-      return json.dumps({
-        "status": "error",
-        "engine": "nvd.nist.gov",
-        "error": f"Exception in vulnDbSearch: {str(e)}"
-      })
 
   @toolspec(
     desc = "Enable or disable remembering previous conversation turns when answering. When disabled, only the latest user prompt is sent to the model.",

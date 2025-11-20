@@ -294,27 +294,34 @@ if __name__ == "__main__":
     trace_handler.setLevel(logging.DEBUG)
     trace_handler.setFormatter(formatter)
 
-    # echo.* logger (app + toolkit)
+    tools_handler = logging.FileHandler(os.path.join(LOG_DIR, "tools.log"))
+    tools_handler.setLevel(logging.DEBUG)
+    tools_handler.setFormatter(formatter)
+
     echo_logger = logging.getLogger("echo")
     echo_logger.setLevel(logging.DEBUG)
     echo_logger.handlers.clear()
-    echo_logger.addHandler(important_handler)   # important.log  (INFO+)
-    echo_logger.addHandler(other_handler)       # other.log      (DEBUG+)
+    echo_logger.addHandler(important_handler)
+    echo_logger.addHandler(other_handler)
     echo_logger.propagate = False
 
-    # echo.llm logger (LLM traffic)
     llm_logger = logging.getLogger("echo.llm")
     llm_logger.setLevel(logging.DEBUG)
     llm_logger.handlers.clear()
-    llm_logger.addHandler(llm_handler)          # llm.log (DEBUG+)
+    llm_logger.addHandler(llm_handler)
     llm_logger.propagate = False
 
-    # echo.trace logger (high-level action/flow log)
     trace_logger = logging.getLogger("echo.trace")
     trace_logger.setLevel(logging.DEBUG)
     trace_logger.handlers.clear()
-    trace_logger.addHandler(trace_handler)      # trace.log (DEBUG+)
+    trace_logger.addHandler(trace_handler)
     trace_logger.propagate = False
+
+    toolkit_logger = logging.getLogger("echo.toolkit")
+    toolkit_logger.setLevel(logging.DEBUG)
+    toolkit_logger.handlers.clear()
+    toolkit_logger.addHandler(tools_handler)    # tools.log (DEBUG+)
+    toolkit_logger.propagate = False
 
     logger = logging.getLogger("echo")
     logger.info("Starting ECHO...")
