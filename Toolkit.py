@@ -886,58 +886,52 @@ class BaseToolkit(Toolkit):
   @toolspec(
     desc=(
       "Search Exploit-DB (exploit-db.com) for exploits by keyword or CVE. "
-      "Returns a list of exploits with id, description, type, platform, date, "
-      "verified flag, port, tags, author, and link. "
-      "Uses the third-party 'pyxploitdb' library (unofficial API)."
+      "Returns results with id, description, type, platform, date, verified flag, and link."
     ),
     args={
       "query": {
         "type": "string",
-        "description": "Search term (can be product name, version, or CVE like 'CVE-2021-44228')."
+        "description": "Search term or CVE (e.g. 'CVE-2021-44228', 'wordpress', 'openssl')."
       },
       "limit": {
         "type": "integer",
-        "description": "Maximum number of results to return (default 10)."
+        "description": "Max number of results to return (default 10)."
       }
     },
     reqs=["query"]
   )
   def exploitdbSearch(self, query, limit=10):
-    """
-    Generic Exploit-DB search via pyxploitdb.search_edb().
-    """
     if pyxploitdb is None:
       return json.dumps({
         "status": "error",
-        "error": (
-          "pyxploitdb is not installed. Install it with "
-          "`pip install pyxploitdb` or via the installSoftware tool."
-        )
+        "error": "pyxploitdb not installed; run `pip install pyxploitdb`"
       })
 
     try:
-      # pyxploitdb.search_edb returns a list of Exploit objects
-      results = pyxploitdb.search_edb(query, print_=False, nb_results=limit)
-      payload = []
+      # ✔️ Correct function for current pyxploitdb
+      results = pyxploitdb.search(query, limit)
+
+      out = []
       for e in results:
-        payload.append({
-          "id": getattr(e, "id_", getattr(e, "id", None)),
+        out.append({
+          "id": getattr(e, "id", None),
           "description": getattr(e, "description", None),
-          "type": getattr(e, "type_", None),
+          "type": getattr(e, "type", None),
           "platform": getattr(e, "platform", None),
-          "date_published": getattr(e, "date_published", None),
-          "verified": getattr(e, "verified", None),
-          "port": getattr(e, "port", None),
-          "tags": getattr(e, "tag_if_any", None),
+          "date": getattr(e, "date", None),
           "author": getattr(e, "author", None),
-          "link": getattr(e, "link", None),
+          "port": getattr(e, "port", None),
+          "verified": getattr(e, "verified", None),
+          "tags": getattr(e, "tags", None),
+          "link": getattr(e, "link", None)
         })
 
       return json.dumps({
         "status": "success",
         "query": query,
-        "results": payload
+        "results": out
       })
+
     except Exception as ex:
       return json.dumps({
         "status": "error",
