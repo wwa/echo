@@ -212,6 +212,12 @@ def promptOption(prompt, history, helpText, toolkit):
     else:
       print("Usage: profile <name>, e.g. 'profile legacy' or 'profile current'")
     loopBehav = "continue"
+  elif prompt.lower() == "testcmd":
+    # Special test command: override user prompt with fixed vulnDb test string
+    test_prompt = "I want top 10 vulndb for wordpress"
+    toolkit.data.prompt = test_prompt
+    print(f"[TestCmd] Using test prompt: {test_prompt}")
+    loopBehav = "test_vuln"
 
   return loopBehav
 
@@ -242,8 +248,13 @@ def mainLoop(toolkit, limit=10):
         break
       elif lOps == "continue":
         continue
+      elif lOps == "test_vuln":
+        # For TestCmd we already set toolkit.data.prompt to the fixed test string
+        print(f"User input (TestCmd): {toolkit.userPrompt()}")
+      else:
+        # Normal behavior: use what user actually typed
+        print(f"User input: {prompt}")
 
-      print(f"User input: {prompt}")
       content, history = modelLoop(toolkit, history)
       history = history[:limit]
       print(content)
