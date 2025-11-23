@@ -552,11 +552,13 @@ class BaseToolkit(BaseCoreToolkit):
     self.data.screenshot = None
     self.data.clipboard = None
 
-    self.trace.info("ACTION: Reading clipboard snapshot.")
-    if hasattr(self, "clipboardRead"):
+
+    if 'clipboardRead' in self._toolspec and self._toolspec.clipboardRead.state == "enabled":
+      self.trace.info("ACTION: Reading clipboard snapshot.")
       self.clipboardRead()
-    self.trace.info("ACTION: Capturing screenshot snapshot.")
-    if hasattr(self, "screenshot"):
+
+    if 'screenshot' in self._toolspec and self._toolspec.screenshot.state == "enabled":
+      self.trace.info("ACTION: Capturing screenshot snapshot.")
       self.screenshot()
 
     return text
