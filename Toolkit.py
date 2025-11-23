@@ -34,7 +34,7 @@ import subprocess
 import shlex
 import requests
 import pyxploitdb
-import re 
+import re
 
 class AttrDict(dict):
   def __init__(self, *args, **kwargs):
@@ -1295,7 +1295,7 @@ class Toolkit(BaseToolkit):
   @toolspec(
     desc=(
             "Run a WordPress security scan using the WPScan Docker image. "
-            "Command executed: docker run -it --rm wpscanteam/wpscan --url {SITE} -e vp  --plugins-detection mixed  --enumerate u --api-token {API_TOKEN}"
+            "Command executed: docker run -it --rm --network host wpscanteam/wpscan --url {SITE} -e vp  --plugins-detection mixed  --enumerate u --api-token {API_TOKEN}"
             "It executes `docker run wpscanteam/wpscan` against the given site URL, "
             "parses the output, and returns a structured JSON summary instead of raw text. "
             "The WPScan API token is loaded from the WPSCAN_API_TOKEN variable in .env and "
@@ -1320,7 +1320,7 @@ class Toolkit(BaseToolkit):
     The command executed is approximately:
 
       docker run --rm wpscanteam/wpscan \\
-        --url <url> -e vp --plugins-detection mixed --enumerate u \\
+        --url <url> -e vp --plugins-detection mixed \\
         --api-token <WPSCAN_API_TOKEN_FROM_ENV>
 
     Important:
@@ -1339,12 +1339,11 @@ class Toolkit(BaseToolkit):
       return json.dumps({"status": "error", "error": msg})
 
     base_cmd = [
-      "docker", "run", "--rm",
+      "docker", "run", "--rm", "--network", "host",
       "wpscanteam/wpscan",
       "--url", url,
       "-e", "vp",
       "--plugins-detection", "mixed",
-      "--enumerate", "u",
       "--api-token", api_token,
     ]
 
