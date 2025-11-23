@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 #Own
 from Toolkit import BaseToolkit
 from echo_config import init_logging_and_ws, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT
-from echo_cli import promptOption
+from echo_cli import promptOption, helpText
 
 def estimate_tokens_from_messages(messages):
     total_chars = 0
@@ -140,16 +140,6 @@ def modelLoop(toolkit, history=[]):
 def mainLoop(toolkit, limit=10):
   history = []
 
-  helpText = (
-    "Type 'history' to see conversation history. \n"
-    "Type 'clear' to clear history. \n"
-    "Type 'reset' to reset all tools. \n\n"
-    "Type 'chain on/off' to enable or disable conversation history chaining. \n"
-    "Type 'log LEVEL' to change log verbose lvl. \n"
-    "Type 'profile NAME' to switch LLM model profile, e.g. 'profile legacy' or 'profile current'. \n\n"
-    "Type 'exit' to quit if you need rest. \n\n")
-
-
   print("Welcome to ECHO! Deep dive into my power. \n "
         " ------------------ \n"
         f"{helpText}")
@@ -159,7 +149,7 @@ def mainLoop(toolkit, limit=10):
       print(">> ", end="")
       prompt = toolkit.input()
 
-      lOps = promptOption(prompt, history, helpText, toolkit)
+      lOps = promptOption(prompt, history, toolkit)
       if lOps == "break":
         break
       elif lOps == "continue":
@@ -190,7 +180,10 @@ if __name__ == "__main__":
         raise Exception('OpenAI API not initialized')
 
     # Turn audio off for console I/O if you want:
-    # toolkit.toggleTool('listen', 'disabled')
-    # toolkit.toggleTool('speak', 'disabled')
+    if os.getenv("ENABLE_LISTEN", "false").lower() == "false":
+        toolkit.toggleTool('listen', 'disabled')
+    if os.getenv("ENABLE_SPEAK", "false").lower() == "false":
+        toolkit.toggleTool('speak', 'disabled')
+
 
     mainLoop(toolkit)

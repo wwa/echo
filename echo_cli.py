@@ -1,6 +1,15 @@
 import traceback
 
-def promptOption(prompt, history, helpText, toolkit):
+helpText = (
+    "Type 'history' to see conversation history. \n"
+    "Type 'clear' to clear history. \n"
+    "Type 'reset' to reset all tools. \n\n"
+    "Type 'chain on/off' to enable or disable conversation history chaining. \n"
+    "Type 'log LEVEL' to change log verbose lvl. \n"
+    "Type 'profile NAME' to switch LLM model profile, e.g. 'profile legacy' or 'profile current'. \n\n"
+    "Type 'exit' to quit if you need rest. \n\n")
+
+def promptOption(prompt, history, toolkit):
     if prompt.lower() in ("exit", "e"):
         print("Goodbye!")
         return "break"

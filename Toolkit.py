@@ -104,8 +104,7 @@ class Toolkit:
 
     self.shodan_api_key = os.getenv("SHODAN_API_KEY", "Missing Key")
     self.nvd_api_key = os.getenv("NVD_API_KEY")
-    self.enable_listen = os.getenv("ENABLE_LISTEN", "false").lower() == "true"
-    self.enable_speak = os.getenv("ENABLE_SPEAK", "false").lower() == "true"
+
 
     # --- OpenAI config from .env ---
     self.openai_api_key  = os.getenv("OPENAI_API_KEY")
@@ -504,10 +503,8 @@ class BaseToolkit(Toolkit):
         file=f,
         response_format="text"
       )
-  @toolspec(desc="Get input from speech-to-text. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, audio", state = "disabled")
+  @toolspec(desc="Get input from speech-to-text. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, audio")
   def listen(self):
-    if not self.enable_listen:
-        return "{status: disabled, reason: 'Speech input disabled in .env'}"
     self.trace.info("ACTION: Starting microphone capture for speech input.")
     if self.data.stt is None:
       rec = sr.Recognizer()
@@ -525,7 +522,7 @@ class BaseToolkit(Toolkit):
     return input()
   def input(self):
     text = None
-    if 'listen' in self._toolspec and self._toolspec.listen.state == "enabled" and self.enable_listen:
+    if 'listen' in self._toolspec and self._toolspec.listen.state == "enabled":
       self.trace.info("ACTION: Listening to your voice (speech-to-text).")
       self.listen()
       text = self.stt()
@@ -595,8 +592,6 @@ class BaseToolkit(Toolkit):
     state = "disabled"
   )
   def speak(self, text):
-    if not self.enable_speak:
-        return "{status: disabled, reason: 'Speech output disabled in .env'}"
     self.trace.info("ACTION: Speaking short response via TTS.")
     threading.Thread(target=self.localtts, kwargs={'text': text}).start()
     return "{status: success}"
