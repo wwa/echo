@@ -56,5 +56,8 @@ fabric.properties
 #logs
 /logs/
 
+#hidden
+/extra-tools/
+
 # CUSTOM
 .env
