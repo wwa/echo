@@ -42,17 +42,18 @@ def modelOne(toolkit, messages):
     #trace.info("ACTION: Sending prompt to LLM (model=%s).", toolkit.openai_chat_model)
     trace.info("ACTION: Sending prompt to LLM.")
 
-    res = toolkit.openai.chat.completions.create(
-        model    = toolkit.openai_chat_model,
-        messages = messages,
-        tools    = toolkit.toolMessage(),
-        tool_choice = "auto"
+    llm_res = toolkit.llm_call(
+        messages=messages,
+        tools=toolkit.toolMessage(),
+        tool_choice="auto"
     )
 
     ts_e = timer()
     #trace.info("ACTION: LLM responded with finish_reason='%s'.", reason)
     trace.info("ACTION: LLM responded with finish_reason.")
     print(f"... took {ts_e-ts_s}s")
+
+    res = llm_res["raw"]
 
     # Log response
     try:
@@ -61,8 +62,9 @@ def modelOne(toolkit, messages):
     except Exception:
         logger.exception("Failed logging LLM response")
         traceback.print_exc()
-    reason  = res.choices[0].finish_reason
-    message = res.choices[0].message
+
+    reason = llm_res["finish_reason"]
+    message = llm_res["message"]
 
     if reason == "stop":
         messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'tool_calls'})))

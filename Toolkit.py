@@ -109,6 +109,7 @@ class BaseCoreToolkit:
     # --- OpenAI config from .env ---
     self.openai_api_key = os.getenv("OPENAI_API_KEY")
     self.openai_base_url = os.getenv("OPENAI_BASE_URL")
+    self.llm_backend = os.getenv("OPENAI_LLM_BACKEND", "completions").lower()
 
     # --- Base model values (used for 'current' profile by default) ---
     default_chat = os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
@@ -173,44 +174,68 @@ class BaseCoreToolkit:
   # --- Tool management / decorator integration ---
   #
   def toolspecBySrc(self, src, context=""):
-    # Generates openAI tool_calls specifications from source code
+    # Generates OpenAI tool specs from source code using the current backend
     if not self.openai:
       raise Exception("Model-assisted functions unavailable")
-    res = self.openai.chat.completions.create(
-      model=self.openai_chat_model,
-      messages=[{
-        "role": "system",
-        "content": f"""
-                A Function description is an object describing a function and its arguments
-                It consists of 3 elements:
-                  1. name: function name
-                  2. description: a short (2 sentences max) description of what the function does.
-                  3. arguments: an argument description
-                An argument description is: {{name:<name>, type:<type>, description: <description>}} where description is a short (2 senteces max) description of the arguments purpose.
-                <type> must be one of: number/integer/string
-                If function require ApiKey. ApiKey should be compatible with setApiKey tool.
-                Generate a function descriptions for each function in source code shown below.
-                Answer in JSON {{functions: [{{name:<name>, description:<description>, args=[array of argument description]}},]}}
-                <code>
-                {src}
-                </code>
-                <context>
-                {context}
-                </context>
-              """
-      }],
-      response_format={"type": "json_object"}
+
+    system_prompt = f"""
+    A Function description is an object describing a function and its arguments.
+    It consists of 3 elements:
+      1. name: function name
+      2. description: a short (2 sentences max) description of what the function does.
+      3. arguments: an argument description.
+    An argument description is: {{name:<name>, type:<type>, description:<description>}}
+    <type> must be one of: number/integer/string
+    If function requires ApiKey, ApiKey should be compatible with setApiKey tool.
+
+    Generate function descriptions for each function in the source code shown below.
+    Answer as JSON: {{"functions":[{{"name":<name>, "description":<description>, "args":[{{"name":..., "type":..., "description":...}}, ...]}}, ...]}}
+    
+
+    <code>
+    {src}
+    </code>
+    <context>
+    {context}
+    </context>
+    """
+
+    llm_res = self.llm_call(
+      messages=[{"role": "system", "content": system_prompt}],
+      response_format={"type": "json_object"},
+      tool_choice="none"  # ignored for responses, fine for chat
     )
-    descs = json.loads(json.loads(res.choices[0].message.model_dump_json())['content'])["functions"]
+    raw = llm_res["raw"]
+
+    # Normalize content extraction for both backends
+    if self.llm_backend == "chat":
+      content = raw.choices[0].message.content
+
+    elif self.llm_backend == "responses":
+      first_step = raw.output[0]
+      text_block = next(
+        c for c in first_step.content
+        if getattr(c, "type", None) in ("output_text", "message", None)
+      )
+      content = getattr(text_block, "text", str(text_block))
+
+    else:
+      raise ValueError(f"Unknown llm_backend: {self.llm_backend}")
+
+    descs = json.loads(content)["functions"]
+
     tools = []
     for desc in descs:
       args = {}
       reqs = []
-      for a in desc['args']:
-        # Force type:string
-        args[a['name']] = {'type': 'string', 'description': a['description']}
-        reqs.append(a['name'])
-      tools.append(genToolspec(desc['name'], desc['description'], args, reqs))
+      for a in desc["args"]:
+        args[a["name"]] = {
+          "type": "string",
+          "description": a["description"],
+        }
+        reqs.append(a["name"])
+      tools.append(genToolspec(desc["name"], desc["description"], args, reqs))
+
     return tools
 
   def addTool(self, func, spec, source=None, prompt=""):
@@ -512,6 +537,71 @@ class BaseCoreToolkit:
       "research_model": self.openai_research_model,
       "stt_model": self.openai_stt_model,
     }
+  def llm_call(self, messages, tools=None, tool_choice="auto", **kwargs):
+    """
+    Unified LLM call.
+    - If self.llm_backend == "completions": uses chat.completions
+    - If self.llm_backend == "responses": uses responses API
+    """
+    if not self.openai:
+      raise RuntimeError("OpenAI client not initialized")
+
+    tools = tools or []
+
+    if self.llm_backend == "completions":
+      res = self.openai.chat.completions.create(
+        model=self.openai_chat_model,
+        messages=messages,
+        tools=tools,
+        tool_choice=tool_choice,
+        **kwargs
+      )
+      choice = res.choices[0]
+      return {
+        "finish_reason": choice.finish_reason,
+        "message": choice.message,
+        "raw": res,
+      }
+
+    elif self.llm_backend == "responses":
+      # Map chat-style messages → responses-style input
+      # (Assumes content is either a string or already a list of content parts)
+      input_blocks = []
+      for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str):
+          content_parts = [{"type": "input_text", "text": content}]
+        else:
+          content_parts = content
+        input_blocks.append({
+          "role": m["role"],
+          "content": content_parts
+        })
+
+      res = self.openai.responses.create(
+        model=self.openai_chat_model,
+        input=input_blocks,
+        tools=tools,
+        **kwargs
+      )
+
+      output = res.output[0]  # first step
+      stop_reason = getattr(output, "stop_reason", None)
+
+      message = None
+      for c in output.content:
+        if getattr(c, "type", None) in ("output_text", "message"):  # depends on SDK
+          message = c
+          break
+
+      return {
+        "finish_reason": stop_reason,
+        "message": message,
+        "raw": res,
+      }
+
+    else:
+      raise ValueError(f"Unknown llm_backend: {self.llm_backend}")
 
 
 #
