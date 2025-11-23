@@ -1,5 +1,5 @@
 # ECHO
-ECHO is a modular GPT-4 based assistant capable of reflection, research and vision.
+ECHO is a modular GPT-4 or newer based assistant capable of reflection, research and vision.
 
 ECHO stands for Enhanced Computational Heuristic Oracle (don't judge me, it named itself).
 
@@ -7,22 +7,87 @@ It's capable of executing python functions from a toolkit that it has direct con
 It can enable/disable existing functions or add new ones from source code that it can write itself.
 Or use Vision + OCR copy to code from a Twitter post of a screenshot of StackOverflow.
 
-# Requirements
-ECHO is built top of OpenAI API. You need to provide OPENAI_API_KEY=<key> in an .env file.
+## Requirements
 
-A decent microphone would be a good idea as audio glitches trigger speech-to-text sometimes.
+-   Python 3.10+
 
-```
-pip install -r requirements.txt &&\
-./echo.py
-```
+-   `.env` file with:
+
+        OPENAI_API_KEY=your_key_here
+
+-   Optional:
+
+    -   Microphone (for STT)
+    -   `WEBSOCKET_LOG_ENABLED=true` for WebSocket log viewer
+
+Install dependencies:
+
+    pip install -r requirements.txt
+
+## How to Run & Install
+
+### 1. Create and activate virtual environment
+
+    python -m venv vEcho
+    source vEcho/bin/activate
+
+### 2. Configure environment
+
+    cp .env.example .env
+
+### 3. Start ECHO
+
+Recommended:
+
+    ./run.sh
+
+Manual:
+
+    python Echo.py
+
+## Debug Features
+
+### Logging System
+
+Stored in `logs/`: - important.log - llm.log - trace.log - tools.log -
+other.log
+
+### WebSocket Log Viewer
+
+Enable:
+
+    WEBSOCKET_LOG_ENABLED=true
+
+Open `wsClient.html` for live logs.
+
+### CLI Debug Commands
+
+-   help
+-   history
+-   clear
+-   reset
+-   log `<level>`{=html}
+-   chain on/off
+-   profile `<name>`{=html}
+-   listtools
+-   toggletool `<name>`{=html} enabled\|disabled
+
 
 # Architecture
-Tech stack: Whisper + GPT-4 + GPT-4-Vision + Tesseract + GPT-4 Assistants + pyttsx3
+Tech stack:
+ - Legacy
+   - Whisper 
+   - GPT-4 
+   - GPT-4-Vision + Tesseract 
+   - GPT-4 Assistants + pyttsx3
+ - Modern
+   - TTS/SST GPT4o
+   - GPT-5-mini
+   - GPT-5.1/5.0
 
 I prefer ElevenLabs TTS quality, but I daily drive local TTS for lower latency.
 
-GPT-4 is used as a decision-maker to collect data, execute various subordinate functions and present results back to you.
+GPT is used as a decision-maker to collect data, execute various subordinate functions and present results back to you.
 
 Subordinate functions include:
 - Vision: reads screenshot of your active window. E.g. search for contents of this one Twitter thread you can't copy-paste from because people post screenshots of articles without links.
@@ -51,3 +116,9 @@ Prompt injections and jailbreaks are easy (here's mine: [FIMjector](https://gith
 With reflection enabled, this is RCE (Remote-Code-Execution) by design. You've been warned.
 
 I've prototyped a protection mechanism [LLM IDS](https://x.com/witoldwaligora/status/1748135598089556098), but it's too slow to deploy for now.
+
+## Warnings
+
+ECHO is powerful and can: - Execute system-level functions - Capture
+screenshots and clipboard data - Be vulnerable to prompt injection Use
+only in trusted environments.
