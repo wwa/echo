@@ -209,7 +209,7 @@ class BaseCoreToolkit:
     raw = llm_res["raw"]
 
     # Normalize content extraction for both backends
-    if self.llm_backend == "chat":
+    if self.llm_backend == "completions":
       content = raw.choices[0].message.content
 
     elif self.llm_backend == "responses":
@@ -624,7 +624,7 @@ class BaseCoreToolkit:
     if not getattr(self, "openai", None):
       raise RuntimeError("OpenAI client not initialized")
 
-    backend = getattr(self, "llm_backend", "chat").lower()
+    backend = getattr(self, "llm_backend", "completions").lower()
     tools = tools if tools is not None else self.toolMessage()
 
     if "tools" in kwargs:
