@@ -34,6 +34,7 @@ import subprocess
 import shlex
 import requests
 import pyxploitdb
+import re 
 
 class AttrDict(dict):
   def __init__(self, *args, **kwargs):
@@ -642,7 +643,7 @@ class BaseCoreToolkit:
       )
       choice = res.choices[0]
       return {
-        "backend": "chat",
+        "backend": "completions",
         "raw": res,
         "finish_reason": choice.finish_reason,
         "message": choice.message,
@@ -952,6 +953,16 @@ class BaseToolkit(BaseCoreToolkit):
 #
 
 class Toolkit(BaseToolkit):
+  def __init__(self):
+    super().__init__()
+    self.echo = logging.getLogger("echo")
+    self.echo_toolkit = logging.getLogger("echo.toolkit")
+    self.trace = logging.getLogger("echo.trace")
+
+    # Load env variables here
+    load_dotenv()
+    self.wpscan_api_token = os.getenv("WPSCAN_API_TOKEN")
+
   @toolspec(
     desc="Search arxiv for publications. Returns {url:<permalink>, title:<title>, authors:<authors>, summary:<summary>}",
     args={
@@ -1280,6 +1291,328 @@ class Toolkit(BaseToolkit):
         "tags": r.get("tags")
       })
     return refs
+
+  @toolspec(
+    desc=(
+            "Run a WordPress security scan using the WPScan Docker image. "
+            "Command executed: docker run -it --rm wpscanteam/wpscan --url {SITE} -e vp  --plugins-detection mixed  --enumerate u --api-token {API_TOKEN}"
+            "It executes `docker run wpscanteam/wpscan` against the given site URL, "
+            "parses the output, and returns a structured JSON summary instead of raw text. "
+            "The WPScan API token is loaded from the WPSCAN_API_TOKEN variable in .env and "
+            "is never logged or returned in clear text."
+    ),
+    args={
+      "url": {
+        "type": "string",
+        "description": "Target WordPress site URL, e.g. 'https://example.com'."
+      },
+      "extra_args": {
+        "type": "string",
+        "description": "Optional extra CLI arguments passed verbatim to WPScan."
+      }
+    },
+    reqs=["url"]
+  )
+  def wordpressScan(self, url, extra_args=""):
+    """
+    Run a WPScan Docker-based WordPress scan and return a structured JSON summary.
+
+    The command executed is approximately:
+
+      docker run --rm wpscanteam/wpscan \\
+        --url <url> -e vp --plugins-detection mixed --enumerate u \\
+        --api-token <WPSCAN_API_TOKEN_FROM_ENV>
+
+    Important:
+    - The real API token is never written to logs or returned to the caller.
+    - The returned JSON contains a parsed summary (version, themes, plugins, users, meta, etc.)
+      along with the raw stdout/stderr for debugging.
+    """
+    logger = self.echo_toolkit
+    trace = self.trace
+
+    api_token = getattr(self, "wpscan_api_token", None)
+    if not api_token:
+      msg = "Missing WPSCAN_API_TOKEN in .env (required for wordpressScan)."
+      logger.error(msg)
+      trace.error(f"ACTION: {msg}")
+      return json.dumps({"status": "error", "error": msg})
+
+    base_cmd = [
+      "docker", "run", "--rm",
+      "wpscanteam/wpscan",
+      "--url", url,
+      "-e", "vp",
+      "--plugins-detection", "mixed",
+      "--enumerate", "u",
+      "--api-token", api_token,
+    ]
+
+    if extra_args:
+      base_cmd.extend(shlex.split(extra_args))
+
+    redacted_cmd = list(base_cmd)
+    try:
+      idx = redacted_cmd.index("--api-token")
+      if idx + 1 < len(redacted_cmd):
+        redacted_cmd[idx + 1] = "****REDACTED****"
+    except ValueError:
+      pass
+
+    logger.info("Starting WPScan for url=%s", url)
+    logger.debug("WPScan command (redacted): %r", redacted_cmd)
+    trace.info("ACTION: Running WPScan Docker scan for %s", url)
+
+    try:
+      ts_s = timer()
+      proc = subprocess.run(
+        base_cmd,
+        capture_output=True,
+        text=True,
+        timeout=3600,  # safety timeout: 1 hour
+      )
+      ts_e = timer()
+      elapsed = ts_e - ts_s
+
+      logger.info("WPScan finished for %s with returncode=%s (%.2fs)", url, proc.returncode, elapsed)
+      if proc.returncode != 0:
+        logger.warning("WPScan reported non-zero exit status %s for url=%s", proc.returncode, url)
+
+      parsed = self._parseWpscanOutput(proc.stdout or "", url=url)
+
+      result = {
+        "status": "success" if proc.returncode == 0 else "error",
+        "url": url,
+        "returncode": proc.returncode,
+        "elapsed_seconds": elapsed,
+        "command": redacted_cmd,  # <-- TOKEN CENSORED HERE
+        "parsed": parsed,
+        "raw": {
+          "stdout": proc.stdout,
+          "stderr": proc.stderr,
+        },
+      }
+      return json.dumps(result)
+
+    except subprocess.TimeoutExpired as ex:
+      msg = f"WPScan timeout for url={url}: {ex}"
+      logger.error(msg)
+      trace.error(f"ACTION: {msg}")
+      return json.dumps({
+        "status": "error",
+        "url": url,
+        "error": f"WPScan timed out: {ex}",
+      })
+    except FileNotFoundError as ex:
+      msg = f"WPScan failed for url={url}: docker executable not found"
+      logger.error("%s (%s)", msg, ex)
+      trace.error("ACTION: WPScan failed – docker executable not found.")
+      return json.dumps({
+        "status": "error",
+        "url": url,
+        "error": "docker executable not found. Make sure Docker is installed and in PATH.",
+      })
+    except Exception as ex:
+      logger.exception("WPScan unexpected error for url=%s", url)
+      trace.error(f"ACTION: WPScan raised unexpected exception: {ex}")
+      return json.dumps({
+        "status": "error",
+        "url": url,
+        "error": f"Unexpected error while running WPScan: {ex}",
+      })
+
+# Helpers --
+
+  # ---- helper for WPScan parsing ----
+  def _stripAnsi(self, text):
+    """Remove ANSI colour codes from WPScan output."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+  def _parseWpscanOutput(self, stdout, url=None):
+    """Parse WPScan human-readable output into a structured JSON-friendly dict.
+
+    The output is free-form text; this helper extracts the most useful parts for the LLM:
+    - WordpressVersion (version, description, is_latest - when detectable)
+    - ScanDate
+    - Plugins: [{name, foundVulnerability, vulnerabilities}]
+    - Templates: [{name, version, latestVersion, foundVulnerability, vulnerabilities}]
+    - Users: list of usernames
+    - InterestingFindings: list of simple strings
+    - Meta: duration, requests, data sent/received, memory usage, etc. (when present)
+    """
+    clean = self._stripAnsi(stdout or "")
+    lines = [ln.rstrip() for ln in clean.splitlines()]
+
+    wordpress_version = None
+    wp_version_desc = None
+    scan_date = None
+    finished_at = None
+    plugins = []
+    templates = []
+    users = []
+    interesting = []
+    meta = {}
+
+    def parse_plugin_block(name, block_lines):
+      text = "\n".join(block_lines)
+      version = None
+      latest = None
+      vulns = []
+      found_vuln = False
+
+      # Version & latest version
+      m_ver = re.search(r"Version:\s*([^\s]+)", text)
+      if m_ver:
+        version = m_ver.group(1).strip().strip(".")
+      m_latest = re.search(r"latest version is\s*([0-9\.]+)", text, re.IGNORECASE)
+      if m_latest:
+        latest = m_latest.group(1).strip()
+
+      # Any explicit warnings / vulnerabilities
+      for ln in block_lines:
+        if "[!]" in ln or "vulnerab" in ln.lower():
+          found_vuln = True
+          vulns.append(ln.strip())
+
+      return {
+        "name": name,
+        "version": version,
+        "latestVersion": latest,
+        "foundVulnerability": found_vuln,
+        "vulnerabilities": vulns,
+      }
+
+    def parse_template_block(name, block_lines):
+      # Theme/template parsing is similar to plugin parsing
+      return parse_plugin_block(name, block_lines)
+
+    i = 0
+    n = len(lines)
+    while i < n:
+      line = lines[i].strip()
+
+      if not line:
+        i += 1
+        continue
+
+      # URL
+      if line.startswith("[+] URL:"):
+        # format: [+] URL: https://example.com/ [1.2.3.4]
+        try:
+          part = line.split("URL:", 1)[1].strip()
+          # Drop trailing [IP] if present
+          if " [" in part:
+            part = part.split(" [", 1)[0].strip()
+          url = url or part
+        except Exception:
+          pass
+
+      # Scan start/finish
+      if line.startswith("[+] Started:"):
+        scan_date = line.split("Started:", 1)[1].strip()
+      if line.startswith("[+] Finished:"):
+        finished_at = line.split("Finished:", 1)[1].strip()
+
+      # WordPress version
+      if "WordPress version" in line and "identified" in line:
+        m = re.search(r"WordPress version\s*([0-9\.]+)", line)
+        if m:
+          wordpress_version = m.group(1)
+        wp_version_desc = line.strip()
+
+      # Theme / template block
+      if "WordPress theme in use:" in line:
+        # Start of a template/theme section
+        try:
+          name = line.split(":", 1)[1].strip()
+        except Exception:
+          name = line.strip()
+
+        block = []
+        i += 1
+        while i < n and not lines[i].strip().startswith("[+] "):
+          block.append(lines[i])
+          i += 1
+        templates.append(parse_template_block(name, block))
+        continue  # already advanced i
+
+      # Generic [+] blocks – can be plugins, findings, etc.
+      if line.startswith("[+] "):
+        name = line[4:].strip()
+        block = []
+        j = i + 1
+        while j < n and not lines[j].strip().startswith("[+] "):
+          block.append(lines[j])
+          j += 1
+
+        block_text = "\n".join(block)
+
+        # Heuristic: plugin blocks mention wp-content/plugins
+        if "wp-content/plugins" in block_text:
+          plugins.append(parse_plugin_block(name, block))
+        elif name.lower().startswith("wpscan db api"):
+          # Skip plan/usage info; we'll extract summary later if needed
+          pass
+        else:
+          # Treat as generic interesting finding
+          combined = name
+          if block_text.strip():
+            combined = name + "\n" + block_text
+          interesting.append(combined)
+
+        i = j
+        continue
+
+      # Users: '[i] User(s) Identified:' then '[+] username' lines
+      if "User(s) Identified" in line:
+        j = i + 1
+        while j < n:
+          l2 = lines[j].strip()
+          if not l2:
+            j += 1
+            continue
+          if l2.startswith("[+] "):
+            users.append(l2[4:].strip())
+            j += 1
+            continue
+          if l2.startswith("[+] Finished:") or l2.startswith("[+] URL:"):
+            break
+          j += 1
+
+      # Meta summary near the end
+      if line.startswith("[+] Requests Done:"):
+        m = re.search(r"Requests Done:\s*(\d+)", line)
+        if m:
+          meta["requestsDone"] = int(m.group(1))
+      if line.startswith("[+] Cached Requests:"):
+        m = re.search(r"Cached Requests:\s*(\d+)", line)
+        if m:
+          meta["cachedRequests"] = int(m.group(1))
+      if line.startswith("[+] Data Sent:"):
+        meta["dataSent"] = line.split("Data Sent:", 1)[1].strip()
+      if line.startswith("[+] Data Received:"):
+        meta["dataReceived"] = line.split("Data Received:", 1)[1].strip()
+      if line.startswith("[+] Memory used:"):
+        meta["memoryUsed"] = line.split("Memory used:", 1)[1].strip()
+      if line.startswith("[+] Elapsed time:"):
+        meta["elapsedText"] = line.split("Elapsed time:", 1)[1].strip()
+
+      i += 1
+
+    return {
+      "WordpressVersion": {
+        "version": wordpress_version,
+        "description": wp_version_desc,
+      },
+      "ScanDate": scan_date,
+      "FinishedAt": finished_at,
+      "URL": url,
+      "Plugins": plugins,
+      "Templates": templates,
+      "Users": users,
+      "InterestingFindings": interesting,
+      "Meta": meta,
+    }
 
 
 #
