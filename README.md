@@ -1,5 +1,5 @@
 # ECHO
-ECHO is a modular GPT-4 or newer based assistant capable of reflection, research and vision.
+ECHO is a modular GPT (4 or newer) based assistant capable of reflection, research and vision.
 
 ECHO stands for Enhanced Computational Heuristic Oracle (don't judge me, it named itself).
 
@@ -9,7 +9,7 @@ Or use Vision + OCR copy to code from a Twitter post of a screenshot of StackOve
 
 ## Requirements
 
--   Python 3.10+
+-   Python 3.13.7+
 
 -   `.env` file with:
 
@@ -66,24 +66,24 @@ Open `wsClient.html` for live logs.
 -   history
 -   clear
 -   reset
--   log `<level>`{=html}
+-   log `<level>`
 -   chain on/off
--   profile `<name>`{=html}
+-   profile `<name>`
 -   listtools
--   toggletool `<name>`{=html} enabled\|disabled
+-   toggletool `<name>` enabled\|disabled
 
 
 # Architecture
 Tech stack:
  - Legacy
-   - Whisper 
+   - TTS/SST Whisper 
    - GPT-4 
    - GPT-4-Vision + Tesseract 
    - GPT-4 Assistants + pyttsx3
  - Modern
-   - TTS/SST GPT4o
+   - TTS/SST gpt-4o-mini-transcribe
    - GPT-5-mini
-   - GPT-5.1/5.0
+   - GPT-5.1/5
 
 I prefer ElevenLabs TTS quality, but I daily drive local TTS for lower latency.
 
