@@ -4,11 +4,10 @@ import traceback
 from timeit import default_timer as timer
 import logging
 from dotenv import load_dotenv
-import asyncio
-import threading
 
 #Own
 from Toolkit import BaseToolkit
+from ws_logging import setup_ws_log_streaming
 
 MODEL_CONTEXT_LIMITS = {
     "gpt-4-turbo-preview": 128000,
@@ -22,151 +21,6 @@ MODEL_CONTEXT_LIMITS = {
     "gpt-5": 400000,
     "gpt-5.1": 400000,
 }
-
-# -------------------------------
-# WebSocket log streaming support
-# -------------------------------
-_ws_loop = None
-_ws_streams = {}
-
-class WebSocketLogHandler(logging.Handler):
-    """
-    Logging handler that forwards formatted log records
-    into a dedicated asyncio queue for a named stream.
-    """
-    def __init__(self, stream_name, formatter=None):
-        super().__init__()
-        self.stream_name = stream_name
-        if formatter is not None:
-            self.setFormatter(formatter)
-
-    def emit(self, record):
-        global _ws_loop, _ws_streams
-        if _ws_loop is None:
-            return
-
-        stream = _ws_streams.get(self.stream_name)
-        if not stream:
-            return
-
-        loop = _ws_loop
-        queue = stream.get("queue")
-        if not queue:
-            return
-
-        try:
-            msg = self.format(record)
-            asyncio.run_coroutine_threadsafe(queue.put(msg), loop)
-        except Exception:
-            # never crash logging
-            pass
-
-
-async def _ws_broadcaster(stream_name: str):
-    """
-    Take log messages from the stream queue and broadcast to all connected clients.
-    """
-    stream = _ws_streams[stream_name]
-    queue = stream["queue"]
-    clients = stream["clients"]
-
-    while True:
-        msg = await queue.get()
-        if not clients:
-            continue
-
-        dead = []
-        for ws in list(clients):
-            try:
-                await ws.send(msg)
-            except Exception:
-                dead.append(ws)
-
-        for ws in dead:
-            try:
-                clients.remove(ws)
-            except KeyError:
-                pass
-
-
-async def _ws_handler(connection):
-    """
-    Single server handler (websockets >= 14).
-    We route by URL path:
-
-      /app   -> 'app'
-      /llm   -> 'llm'
-      /trace -> 'trace'
-      /tools -> 'tools'
-
-    Anything else falls back to 'app' so that clients
-    still get logs instead of silent disconnects.
-    """
-    # Safely get path from the request
-    request = getattr(connection, "request", None)
-    raw_path = getattr(request, "path", "/") if request is not None else "/"
-
-    # Strip query string and leading/trailing slashes
-    path = raw_path.split("?", 1)[0]
-    p = (path or "/").strip("/")
-
-    # Map to stream; unknown paths => 'app'
-    if p in _ws_streams:
-        stream_name = p
-    elif p == "" or p == "/":
-        stream_name = "app"
-    else:
-        # Unknown path => just use app instead of closing
-        stream_name = "app"
-
-    stream = _ws_streams.get(stream_name)
-    clients = stream["clients"]
-    clients.add(connection)
-
-    # Optional: debug-log new connection
-    logging.getLogger("echo.trace").debug(
-        "WS client connected: path=%s -> stream=%s", raw_path, stream_name
-    )
-
-    try:
-        async for _ in connection:
-            # Ignore incoming messages
-            pass
-    finally:
-        clients.discard(connection)
-        logging.getLogger("echo.trace").debug(
-            "WS client disconnected: path=%s -> stream=%s", raw_path, stream_name
-        )
-
-
-def _start_ws_server(host: str, port: int, stream_names):
-    global _ws_loop, _ws_streams
-    import websockets
-
-    loop = asyncio.new_event_loop()
-    _ws_loop = loop
-    asyncio.set_event_loop(loop)
-
-    async def server_main():
-        for name in stream_names:
-            _ws_streams[name] = {
-                "queue": asyncio.Queue(),
-                "clients": set(),
-            }
-
-        for name in stream_names:
-            asyncio.create_task(_ws_broadcaster(name))
-
-        async with websockets.serve(_ws_handler, host, port):
-            print(f"[WS-LOG] WebSocket log server on ws://{host}:{port}")
-            print("[WS-LOG] Streams: " + ", ".join(f"/{n}" for n in stream_names))
-            # Run forever
-            await asyncio.Future()
-
-    try:
-        loop.run_until_complete(server_main())
-    finally:
-        loop.close()
 
 def estimate_tokens_from_messages(messages):
     total_chars = 0
@@ -477,40 +331,17 @@ if __name__ == "__main__":
         ws_host = os.getenv("WEBSOCKET_LOG_HOST", "127.0.0.1")
         ws_port = int(os.getenv("WEBSOCKET_LOG_PORT", "9876"))
 
+        # Map stream names to logger names (same as before)
+        ws_streams_cfg = {
+            "app":   "echo",
+            "llm":   "echo.llm",
+            "trace": "echo.trace",
+            "tools": "echo.toolkit",
+        }
+
         try:
-            import websockets  # dependency check
-
-            # Map stream names to logger names
-            ws_streams_cfg = {
-                "app":   "echo",
-                "llm":   "echo.llm",
-                "trace": "echo.trace",
-                "tools": "echo.toolkit",
-            }
-
-            # Start one server in a background thread
-            t = threading.Thread(
-                target=_start_ws_server,
-                args=(ws_host, ws_port, list(ws_streams_cfg.keys())),
-                daemon=True,
-            )
-            t.start()
-
-            # Attach handlers: each logger -> its stream
-            for stream_name, logger_name in ws_streams_cfg.items():
-                log = logging.getLogger(logger_name)
-                ws_handler = WebSocketLogHandler(stream_name, formatter)
-                ws_handler.setLevel(logging.DEBUG)
-                log.addHandler(ws_handler)
-
-            print(
-                f"WebSocket log streaming enabled at ws://{ws_host}:{ws_port} "
-                f"with paths /app, /llm, /trace, /tools"
-            )
-
-            # Optional: quick test message
-            logging.getLogger("echo").info("WS streaming: test log from 'echo'")
-
+            # websockets import happens inside ws_logging._start_ws_server
+            setup_ws_log_streaming(ws_host, ws_port, ws_streams_cfg, formatter)
         except ImportError:
             print(
                 "⚠️  WEBSOCKET_LOG_ENABLED=true but 'websockets' package is not installed. "
