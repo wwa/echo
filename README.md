@@ -60,7 +60,7 @@ Enable:
 
 Open `wsClient.html` for live logs.
 
-### CLI Debug Commands
+### CLI Commands
 
 -   help
 -   history
@@ -74,7 +74,7 @@ Open `wsClient.html` for live logs.
 
 
 # Architecture
-Tech stack:
+LLM Tech stack:
  - Legacy
    - `TTS` Whisper 
    - `Chat` GPT-4 
@@ -87,7 +87,7 @@ Tech stack:
    - `vision` GPT-5 + Tesseract 
    - `research`GPT-5.1
 
--  STT
+-  `STT`
     - I prefer ElevenLabs quality, but I daily drive local for lower latency.
 
 GPT is used as a decision-maker to collect data, execute various subordinate functions and present results back to you.
@@ -122,6 +122,9 @@ I've prototyped a protection mechanism [LLM IDS](https://x.com/witoldwaligora/st
 
 ## Warnings
 
-ECHO is powerful and can: - Execute system-level functions - Capture
-screenshots and clipboard data - Be vulnerable to prompt injection Use
+ECHO is powerful and can: 
+- Execute system-level functions 
+- Capture
+screenshots and clipboard data
+- Be vulnerable to prompt injection Use
 only in trusted environments.
