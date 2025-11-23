@@ -615,7 +615,7 @@ class BaseCoreToolkit:
 
     Returns:
       {
-        "backend": "chat" | "responses",
+        "backend": "completions" | "responses",
         "raw": <raw SDK response>,
         "finish_reason": "stop" | "tool_calls" | <other> | None,
         "message": <primary assistant message-like object>,
@@ -651,7 +651,6 @@ class BaseCoreToolkit:
 
     # ---------------- RESPONSES ----------------
     if backend == "responses":
-        # /responses ignores tool_choice, so drop it
         kwargs.pop("tool_choice", None)
 
         input_items = self._messages_to_responses_input(messages)
@@ -664,9 +663,7 @@ class BaseCoreToolkit:
             **kwargs,
         )
 
-        # --------- extract text in a robust way ----------
         text = None
-        # 1) Preferred: use the convenience attribute if present
         text = getattr(res, "output_text", None)
 
         # 2) Fallback: manually walk res.output
@@ -674,7 +671,6 @@ class BaseCoreToolkit:
             chunks = []
             output = getattr(res, "output", None) or []
             for item in output:
-                # We only care about message items, skip reasoning, etc.
                 if getattr(item, "type", None) == "message":
                     for c in getattr(item, "content", []) or []:
                         if hasattr(c, "text") and c.text:
@@ -682,7 +678,7 @@ class BaseCoreToolkit:
             text = "\n".join(chunks) if chunks else ""
 
         # --------- normalize stop_reason to your old semantics ----------
-        finish_reason = "stop"   # sensible default
+        finish_reason = "stop"
         output = getattr(res, "output", None) or []
         if output:
             first = output[0]
@@ -690,10 +686,8 @@ class BaseCoreToolkit:
             if raw_reason == "tool_use":
                 finish_reason = "tool_calls"
             else:
-                # end_turn, max_output, etc → treat as stop
                 finish_reason = "stop"
 
-        # Build assistant-like message wrapper so modelOne can use it
         from types import SimpleNamespace as AttrDict
         message_like = AttrDict({
             "role": "assistant",
