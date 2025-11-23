@@ -83,7 +83,7 @@ LLM Tech stack:
    - `research` gpt-4-turbo
  - Modern
    - `TTS` gpt-4o-mini-transcribe
-   - `Chat` <GPT-5-mini
+   - `Chat` GPT-5-mini
    - `vision` GPT-5 + Tesseract 
    - `research`GPT-5.1
 
