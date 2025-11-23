@@ -1206,7 +1206,7 @@ class Toolkit(BaseToolkit):
     params = {
       "keywordSearch": query,
       "resultsPerPage": limit,
-      "apiKey": api_key
+      #"apiKey": api_key
     }
 
     try:
