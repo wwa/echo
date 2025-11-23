@@ -16,7 +16,8 @@ helpText = (
     "  listtools              - List all tools\n"
     "  listtools disabled     - List only disabled tools\n"
     "  listtools enabled      - List only enabled tools\n"
-    "  toggletool NAME STATE  - Enable or disable a tool (STATE = enabled|disabled)\n\n"
+    "  toggletool NAME STATE  - Enable or disable a tool (STATE = enabled|disabled)\n"
+    "  toolinfo NAME          - Show parameters and source code for a tool\n\n"
 
     "Utility:\n"
     "  testcmd                - Run vulnerability DB test prompt\n"
@@ -118,6 +119,56 @@ def promptOption(prompt, history, toolkit):
 
         res = toolkit.toggleTool(name, state)
         print(f"Tool '{name}' set to state '{state}'. Result: {res}")
+        return "continue"
+    elif prompt.lower().startswith("toolinfo"):
+        parts = prompt.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            print("Usage: toolinfo <tool_name>")
+            return "continue"
+
+        name = parts[1].strip()
+
+        toolspecs = getattr(toolkit, "_toolspec", {})
+        tool = toolspecs.get(name)
+
+        if not tool:
+            print(f"Tool '{name}' not found.")
+            return "continue"
+
+        func_spec = tool.spec.get("function", {})
+        params = func_spec.get("parameters", {})
+        props = params.get("properties", {})
+        required = set(params.get("required", []))
+
+        print()
+        print(f"Tool: {name}")
+        print(f"State: {tool.state}")
+        print(f"Description: {func_spec.get('description', '')}")
+        print()
+
+        if not props:
+            print("Parameters: (none)")
+        else:
+            print("Parameters:")
+            for pname, pinfo in props.items():
+                ptype = pinfo.get("type", "string")
+                pdesc = pinfo.get("description", "")
+                req_flag = " (required)" if pname in required else ""
+                print(f"  - {pname}: {ptype}{req_flag}")
+                if pdesc:
+                    print(f"      {pdesc}")
+        print()
+
+        source = getattr(tool, "source", None)
+        if source:
+            print("Source code:")
+            print("-" * 80)
+            print(source)
+            print("-" * 80)
+        else:
+            print("Source code: <not available>")
+
+        print()
         return "continue"
 
     elif prompt.lower() == "testcmd":

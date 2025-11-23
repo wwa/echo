@@ -70,8 +70,8 @@ Open `wsClient.html` for live logs.
 -   chain on/off
 -   profile `<name>`
 -   listtools
--   toggletool `<name>` enabled\|disabled
-
+-   toggletool `<name>` enabled|disabled
+-   toolinfo `<name>`               Show parameters and source code for a toolkit function
 
 # Architecture
 LLM Tech stack:
