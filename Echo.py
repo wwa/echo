@@ -6,7 +6,7 @@ import logging
 from dotenv import load_dotenv
 
 #Own
-from Toolkit import BaseToolkit
+from Toolkit import BaseToolkit, FullToolkit
 from echo_config import init_logging_and_ws, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT
 from echo_cli import promptOption, helpText
 
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     # ---------------------------------------
     # Start toolkit
     # ---------------------------------------
-    toolkit = BaseToolkit()
+    toolkit = FullToolkit()
     if not toolkit.openai:
         raise Exception('OpenAI API not initialized')
 

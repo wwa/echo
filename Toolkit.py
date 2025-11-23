@@ -82,66 +82,66 @@ def b64(img):
   with open(img, "rb") as f:
     return base64.b64encode(f.read()).decode('utf-8')
 
-class Toolkit:
-  # Contains toolkit barebones
-  def __init__(self):
-    self.data             = AttrDict()
-    self.module           = ModuleType("DynaToolKit")
-    self._toolspec        = AttrDict()
-    self.logger           = logging.getLogger(f"echo.toolkit.{self.__class__.__name__}")
-    self.trace            = logging.getLogger("echo.trace")
-    self.echo_toolkit     = logging.getLogger("echo.toolkit")
-    for name in dir(self):
-      func = getattr(self, name)
-      if not callable(func):
-        continue
-      if not hasattr(func, '_toolspec'):
-        continue
-      func._toolspec.function = func
-      self._toolspec[name] = func._toolspec
+class BaseCoreToolkit:
+  """
+  Internal core:
+  - env / OpenAI / profiles
+  - tool registry + decorator integration
+  - generic tool management methods (call, fake, addTool, etc.)
+  """
 
+  def __init__(self):
+    # Core state
+    self.data = AttrDict()
+    self.module = ModuleType("DynaToolKit")
+    self._toolspec = AttrDict()
+    self.logger = logging.getLogger(f"echo.toolkit.{self.__class__.__name__}")
+    self.trace = logging.getLogger("echo.trace")
+    self.echo_toolkit = logging.getLogger("echo.toolkit")
+
+    # Load .env
     load_dotenv()
 
+    # --- API keys ---
     self.shodan_api_key = os.getenv("SHODAN_API_KEY", "Missing Key")
     self.nvd_api_key = os.getenv("NVD_API_KEY")
 
-
     # --- OpenAI config from .env ---
-    self.openai_api_key  = os.getenv("OPENAI_API_KEY")
+    self.openai_api_key = os.getenv("OPENAI_API_KEY")
     self.openai_base_url = os.getenv("OPENAI_BASE_URL")
 
     # --- Base model values (used for 'current' profile by default) ---
-    default_chat     = os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
-    default_vision   = os.getenv("OPENAI_VISION_MODEL", "gpt-5.0")
+    default_chat = os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
+    default_vision = os.getenv("OPENAI_VISION_MODEL", "gpt-5.0")
     default_research = os.getenv("OPENAI_RESEARCH_MODEL", "gpt-5.1")
-    default_stt      = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
+    default_stt = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
 
     # Store active values (will be overridden by profile)
-    self.openai_chat_model     = default_chat
-    self.openai_vision_model   = default_vision
+    self.openai_chat_model = default_chat
+    self.openai_vision_model = default_vision
     self.openai_research_model = default_research
-    self.openai_stt_model      = default_stt
+    self.openai_stt_model = default_stt
 
     # --- Named model profiles (template sets) ---
-    # You can extend this dict with more profiles later.
     self.model_profiles = {
       "legacy": {
-        "chat":     os.getenv("OPENAI_CHAT_MODEL_LEGACY", "gpt-4-turbo-preview"),
-        "vision":   os.getenv("OPENAI_VISION_MODEL_LEGACY", "gpt-4-vision-preview"),
+        "chat": os.getenv("OPENAI_CHAT_MODEL_LEGACY", "gpt-4-turbo-preview"),
+        "vision": os.getenv("OPENAI_VISION_MODEL_LEGACY", "gpt-4-vision-preview"),
         "research": os.getenv("OPENAI_RESEARCH_MODEL_LEGACY", "gpt-4-turbo-preview"),
-        "stt":      os.getenv("OPENAI_STT_MODEL_LEGACY", "whisper-1"),
+        "stt": os.getenv("OPENAI_STT_MODEL_LEGACY", "whisper-1"),
       },
       "current": {
-        "chat":     os.getenv("OPENAI_CHAT_MODEL_CURRENT",  default_chat),
-        "vision":   os.getenv("OPENAI_VISION_MODEL_CURRENT", default_vision),
+        "chat": os.getenv("OPENAI_CHAT_MODEL_CURRENT", default_chat),
+        "vision": os.getenv("OPENAI_VISION_MODEL_CURRENT", default_vision),
         "research": os.getenv("OPENAI_RESEARCH_MODEL_CURRENT", default_research),
-        "stt":      os.getenv("OPENAI_STT_MODEL_CURRENT",    default_stt),
+        "stt": os.getenv("OPENAI_STT_MODEL_CURRENT", default_stt),
       },
     }
 
-    # Select starting profile from env, default 'current'
+    # Select starting profile
     self.current_model_profile = os.getenv("OPENAI_MODEL_PROFILE", "current").lower()
 
+    # OpenAI client
     client_kwargs = {}
     if self.openai_api_key:
       client_kwargs["api_key"] = self.openai_api_key
@@ -159,39 +159,47 @@ class Toolkit:
     except Exception:
       self.logger.exception("Failed to apply model profile '%s'", self.current_model_profile)
 
+    # Discover all @toolspec-decorated methods on *this instance*
+    for name in dir(self):
+      func = getattr(self, name)
+      if not callable(func):
+        continue
+      if not hasattr(func, "_toolspec"):
+        continue
+      func._toolspec.function = func
+      self._toolspec[name] = func._toolspec
 
-  def reset(self):
-    print("Resetting Toolkit")
-
+  #
+  # --- Tool management / decorator integration ---
+  #
   def toolspecBySrc(self, src, context=""):
     # Generates openAI tool_calls specifications from source code
-    #   WARNING: model-generated, not bulletproof.
     if not self.openai:
       raise Exception("Model-assisted functions unavailable")
     res = self.openai.chat.completions.create(
-      model    = self.openai_chat_model,
-      messages = [{
+      model=self.openai_chat_model,
+      messages=[{
         "role": "system",
         "content": f"""
-          A Function description is an object describing a function and its arguments
-          It consists of 3 elements:
-            1. name: function name
-            2. description: a short (2 sentences max) description of what the function does.
-            3. arguments: an argument description
-          An argument description is: {{name:<name>, type:<type>, description: <description>}} where description is a short (2 senteces max) description of the arguments purpose.
-          <type> must be one of: number/integer/string
-          If function require ApiKey. ApiKey should be compatible with setApiKey tool.
-          Generate a function descriptions for each function in source code shown below.
-          Answer in JSON {{functions: [{{name:<name>, description:<description>, args=[array of argument description]}},]}}
-          <code>
-          {src}
-          </code>
-          <context>
-          {context}
-          </context>
-        """
+                A Function description is an object describing a function and its arguments
+                It consists of 3 elements:
+                  1. name: function name
+                  2. description: a short (2 sentences max) description of what the function does.
+                  3. arguments: an argument description
+                An argument description is: {{name:<name>, type:<type>, description: <description>}} where description is a short (2 senteces max) description of the arguments purpose.
+                <type> must be one of: number/integer/string
+                If function require ApiKey. ApiKey should be compatible with setApiKey tool.
+                Generate a function descriptions for each function in source code shown below.
+                Answer in JSON {{functions: [{{name:<name>, description:<description>, args=[array of argument description]}},]}}
+                <code>
+                {src}
+                </code>
+                <context>
+                {context}
+                </context>
+              """
       }],
-      response_format={ "type": "json_object" }
+      response_format={"type": "json_object"}
     )
     descs = json.loads(json.loads(res.choices[0].message.model_dump_json())['content'])["functions"]
     tools = []
@@ -199,28 +207,30 @@ class Toolkit:
       args = {}
       reqs = []
       for a in desc['args']:
-        # args[a['name']] = {'type':a['type'], 'description':a['type']}
-        # forcing type:string because models have weird ideas when generating types (e.g. type:url)
-        args[a['name']] = {'type':'string', 'description':a['description']}
+        # Force type:string
+        args[a['name']] = {'type': 'string', 'description': a['description']}
         reqs.append(a['name'])
-      tools.append(genToolspec(desc['name'],desc['description'],args,reqs))
+      tools.append(genToolspec(desc['name'], desc['description'], args, reqs))
     return tools
+
   def addTool(self, func, spec, source=None, prompt=""):
     dec = toolspec(
-      desc   = spec['function']['description'],
-      args   = spec['function']['parameters']['properties'],
-      reqs   = spec['function']['parameters']['required'],
-      source = source,
-      prompt = prompt
+      desc=spec['function']['description'],
+      args=spec['function']['parameters']['properties'],
+      reqs=spec['function']['parameters']['required'],
+      source=source,
+      prompt=prompt
     )
     dec(func)
     self._toolspec[func.__name__] = func._toolspec
     return "{status: success}"
+
   def addToolByRef(self, func):
     # Registers a function by reference
-    src  = inspect.getsource(func)
+    src = inspect.getsource(func)
     spec = self.toolspecBySrc(src)[0]
     return self.addTool(func, spec, src)
+
   def toolPrompt(self):
     prompt = ""
     for k in self._toolspec:
@@ -228,6 +238,7 @@ class Toolkit:
       if tool.state == "enabled":
         prompt += tool.prompt
     return prompt
+
   def toolMessage(self):
     # Generates tool_calls table
     msgs = []
@@ -236,10 +247,10 @@ class Toolkit:
       if tool.state == "enabled":
         msgs.append(tool.spec)
     return msgs
+
   def call(self, cid, func):
     ts_s = timer()
     self.logger.info("Tool call requested: %s", func.name)
-    #self.trace.info("ACTION: LLM selected tool '%s' (tool_call_id=%s) (prop=%s)", func.name, cid, self._toolspec[func.name])
     self.trace.info(
       f"ACTION: LLM selected tool '{func.name}' (tool_call_id={cid}) (args={getattr(func, 'arguments', None)})"
     )
@@ -259,7 +270,7 @@ class Toolkit:
         args = json.loads(func.arguments)
         self.logger.info("Calling tool %s with args=%s", func.name, args)
         self.trace.info("ACTION: Calling tool '%s' with args=%s", func.name, args)
-        self.echo_toolkit.info("Tool %s Output:\n %s", func.name, args)
+        self.echo_toolkit.info("Tool %s Input Args:\n %s", func.name, args)
         res = self._toolspec[func.name].function(**args)
         self.logger.info("Tool %s completed successfully.", func.name)
         self.trace.info("ACTION: Tool '%s' completed.", func.name)
@@ -272,8 +283,7 @@ class Toolkit:
     ts_e = timer()
     self.logger.info("Tool %s finished in %.3fs", func.name, ts_e - ts_s)
     self.trace.info("ACTION: Tool '%s' finished in %.3fs", func.name, ts_e - ts_s)
-    print(f"... took {ts_e-ts_s}s")
-
+    print(f"... took {ts_e - ts_s}s")
 
     output = {
       "role": "tool",
@@ -283,15 +293,13 @@ class Toolkit:
     }
 
     self.echo_toolkit.info("Tool %s Output:\n %s", func.name, output)
-
     return output
 
-  def fake(self,name,args='{}'):
+  def fake(self, name, args='{}'):
     # Fake a tool call. Saves a model call while preserving context flow.
-    # Use to pre-emptively inject data into history.
-    func = AttrDict({'name':name, 'arguments':args})
-    cid  = f"call_{secrets.token_urlsafe(24)}" # mimicking OpenAI IDs. Probably overkill.
-    res  = self.call(cid,func)
+    func = AttrDict({'name': name, 'arguments': args})
+    cid = f"call_{secrets.token_urlsafe(24)}"
+    res = self.call(cid, func)
     return [{
       'role': 'assistant',
       'tool_calls': [{
@@ -303,7 +311,7 @@ class Toolkit:
         'type': 'function'
       }],
     }, res]
-  
+
   @toolspec(
     desc="List toolkit functions and their current state. "
          "Mode can be 'disabled' (default), 'enabled', or 'all'.",
@@ -335,31 +343,30 @@ class Toolkit:
       })
 
     return tools
-  
+
   @toolspec(
-    desc = "Toggles tool state: enabled/disabled. Disabled tools are not added to tool_calls, saving tokens",
-    args = {
-      "name":  {"type": "string", "description": "Python source code of functions to be added to toolkit"},
+    desc="Toggles tool state: enabled/disabled. Disabled tools are not added to tool_calls, saving tokens",
+    args={
+      "name": {"type": "string", "description": "Tool name to toggle"},
       "state": {"type": "string", "description": "One of: enabled/disabled"}
     },
-    reqs = ["name","state"]
+    reqs=["name", "state"]
   )
   def toggleTool(self, name, state):
-    #TODO: check if model thinks history is valid if a tool_call is removed
     if name not in self._toolspec:
       return f"{{status: error, error:{name} not found}}"
     self._toolspec[name].state = state
     return "{status: success}"
-  
+
   @toolspec(
-    desc = "Adds functions defined by Python source code to the toolkit. This should only be used if user explicitly asked to add a function to toolkit.",
-    args = {"src": {"type": "string", "description": "Python source code of functions to be added to toolkit"}},
-    reqs = ["src"]
+    desc="Adds functions defined by Python source code to the toolkit. This should only be used if user explicitly asked to add a function to toolkit.",
+    args={"src": {"type": "string", "description": "Python source code of functions to be added to toolkit"}},
+    reqs=["src"]
   )
   def addToolBySrc(self, src):
     # Registers a function by source code
-    logs  = ""
-    code  = compile(src, self.module.__name__, 'exec')
+    logs = ""
+    code = compile(src, self.module.__name__, 'exec')
     specs = self.toolspecBySrc(src)
     exec(code, self.module.__dict__)
     for spec in specs:
@@ -369,6 +376,9 @@ class Toolkit:
       logs += self.addTool(func, spec, src)
     return logs
 
+  #
+  # --- API keys & profiles (core) ---
+  #
   def _update_env_var(self, key, value):
     os.environ[key] = value
     env_path = os.path.join(os.getcwd(), ".env")
@@ -418,7 +428,6 @@ class Toolkit:
     persisted = False
 
     if svc == "openai":
-      # Update OpenAI client
       self.openai_api_key = api_key
       persisted = self._update_env_var("OPENAI_API_KEY", api_key)
       client_kwargs = {"api_key": api_key}
@@ -429,12 +438,13 @@ class Toolkit:
     elif svc == "shodan":
       self.shodan_api_key = api_key
       persisted = self._update_env_var("SHODAN_API_KEY", api_key)
-      self.shodan = shodan.Shodan(api_key)
+      if hasattr(self, "shodan"):
+        self.shodan = shodan.Shodan(api_key)
 
     elif svc == "serpapi":
       persisted = self._update_env_var("SERPAPI_API_KEY", api_key)
-      # serpapi.Client can take api_key explicitly
-      self.serpapi = serpapi.Client(api_key=api_key)
+      if hasattr(self, "serpapi"):
+        self.serpapi = serpapi.Client(api_key=api_key)
 
     else:
       return json.dumps({
@@ -449,10 +459,6 @@ class Toolkit:
     })
 
   def _apply_model_profile(self, profile_name: str) -> bool:
-    """
-    Internal helper: apply a named model profile ('legacy', 'current', etc.).
-    Updates chat/vision/research/stt model fields.
-    """
     profile_key = profile_name.strip().lower()
     if profile_key not in self.model_profiles:
       self.logger.warning("Unknown model profile '%s'", profile_name)
@@ -460,7 +466,6 @@ class Toolkit:
 
     prof = self.model_profiles[profile_key]
 
-    # Only set if present in profile
     if "chat" in prof:
       self.openai_chat_model = prof["chat"]
     if "vision" in prof:
@@ -508,41 +513,29 @@ class Toolkit:
       "stt_model": self.openai_stt_model,
     }
 
-  
-class BaseToolkit(Toolkit):
-  # Contains basic user communication functions
+
+#
+# BaseToolkit (system toolkit: decorator mgmt + IO + console + clipboard, etc.)
+#
+
+class BaseToolkit(BaseCoreToolkit):
   def __init__(self):
-    super(BaseToolkit, self).__init__()
+    super().__init__()
+    # System-level extras
     self.data.stt = None
     self.shodan = shodan.Shodan(self.shodan_api_key)
     self.serpapi = serpapi.Client()
     self.chain_enabled = True
-  def stt(self, file=None):
-    if file is None:
-      file = self.data.stt.file
-    with open(file, "rb") as f:
-      return self.openai.audio.transcriptions.create(
-        model=self.openai_stt_model,
-        file=f,
-        response_format="text"
-      )
-  @toolspec(desc="Get input from speech-to-text. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, audio")
-  def listen(self):
-    self.trace.info("ACTION: Starting microphone capture for speech input.")
-    if self.data.stt is None:
-      rec = sr.Recognizer()
-      mic = sr.Microphone()
-      self.data.stt = AttrDict({'rec':rec, 'mic':mic, 'file':'./stt.mp3'})
-      with mic:
-        rec.adjust_for_ambient_noise(mic)
-    with self.data.stt.mic:
-      audio = self.data.stt.rec.listen(self.data.stt.mic)
-    with open(self.data.stt.file, "wb") as f:
-      f.write(audio.get_wav_data(convert_rate=44100))
-  @toolspec(desc="Get input from console. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, text, console")
+
+  @toolspec(
+    desc="Get input from console. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, text, console",
+    args={},
+    reqs=[]
+  )
   def read(self):
     self.trace.info("ACTION: Reading text from console (input()).")
     return input()
+
   def input(self):
     text = None
     if 'listen' in self._toolspec and self._toolspec.listen.state == "enabled":
@@ -555,149 +548,84 @@ class BaseToolkit(Toolkit):
       text = self.read()
       self.trace.info("ACTION: Received your text input from console.")
 
-    self.data.prompt     = text
+    self.data.prompt = text
     self.data.screenshot = None
-    self.data.clipboard  = None
+    self.data.clipboard = None
 
     self.trace.info("ACTION: Reading clipboard snapshot.")
-    self.clipboardRead()
+    if hasattr(self, "clipboardRead"):
+      self.clipboardRead()
     self.trace.info("ACTION: Capturing screenshot snapshot.")
-    self.screenshot()
+    if hasattr(self, "screenshot"):
+      self.screenshot()
 
     return text
+
   def userPrompt(self):
     return self.data.prompt
 
+  def reset(self):
+    print("Resetting Toolkit")
+
+  #
+  # System "web-ish" tools
+  #
   @toolspec(
-    desc = "Open URL in default web browser. Can be a local path with file:/// URL",
-    args = {"url": {"type": "string", "description": "URL to be opened"}},
-    reqs = ["url"]
+    desc="Open URL in default web browser. Can be a local path with file:/// URL",
+    args={"url": {"type": "string", "description": "URL to be opened"}},
+    reqs=["url"]
   )
   def browse(self, url):
     webbrowser.open(url, new=2)
     return "{status: success}"
+
   @toolspec(
-    desc = "Downloads file from URL. Returns local path of downloaded file.",
-    args = {"url": {"type": "string", "description": "File to download"}},
-    reqs = ["url"]
+    desc="Downloads file from URL. Returns local path of downloaded file.",
+    args={
+      "url": {"type": "string", "description": "File to download"},
+      "filename": {"type": "string", "description": "Optional filename/path to save as."}
+    },
+    reqs=["url"]
   )
   def download(self, url, filename=None):
-    # downloads to tmp by default
     file, _ = urllib.request.urlretrieve(url, filename)
-    return f"{{status: success, file={file}}}"
-  
+    return f'{{"status": "success", "file": {json.dumps(file)}}}'
+
   @toolspec(
-    desc = "Search the Internet. Returns top 10 results: {url, title, description}",
-    args = {"phrase": {"type": "string",  "description": "Phrase to search for"},
-            "limit":  {"type": "integer", "description": "Number of results. Default: 10"}},
-    reqs = ["phrase"],
-    state = "disabled",
+    desc="Search the Internet. Returns top 10 results: {url, title, description}",
+    args={
+      "phrase": {"type": "string", "description": "Phrase to search for"},
+      "limit": {"type": "integer", "description": "Number of results. Default: 10"}
+    },
+    reqs=["phrase"],
+    state="disabled",
   )
   def webSearch(self, phrase, limit=10):
-    res = self.serpapi.search({'engine': 'google','q': phrase})
-    arr = [{'url': r['link'], 'title':r['title'], 'description': r['snippet']} for r in res['organic_results'][:limit]]
-    return f"{{status: success, content:{json.dumps(arr)}}}"
-  
-  def localtts(self,text):
-    engine = pyttsx3.init()
-    engine.say(text)
-    engine.runAndWait()
-    return "{status: success}"
-  @toolspec(
-    desc = """
-      Speak text using text-to-speech. Keep it short and entertaining. Jarvis style banter is welcome.
-      Speak should only be used for very short communication - single sentence summary, remark or progress update.
-      Category: output, audio
-      """,
-    args = {"text": {"type": "string", "description": "Text to be spoken. Keep short, one sentence."}},
-    reqs = ["text"],
-    prompt = "When user says 'say','tell' etc use speak.",
-    state = "disabled"
-  )
-  def speak(self, text):
-    self.trace.info("ACTION: Speaking short response via TTS.")
-    threading.Thread(target=self.localtts, kwargs={'text': text}).start()
-    return "{status: success}"
+    res = self.serpapi.search({'engine': 'google', 'q': phrase})
+    arr = [
+      {'url': r['link'], 'title': r['title'], 'description': r['snippet']}
+      for r in res.get('organic_results', [])[:limit]
+    ]
+    return json.dumps({"status": "success", "content": arr})
 
-  def screenshot(self, title=None):
-    self.trace.info("ACTION: Capturing your screen (primary monitor).")
-    with mss.mss() as sct:
-      monitor = sct.monitors[1]  # 0 = all, 1 = primary
-      img = sct.grab(monitor)
-      img_pil = Image.frombytes("RGB", img.size, img.rgb)
-      self.data.screenshot = img_pil
-    return "{status: success}"
-
-  def selectImage(self, image=None):
-    if image is None:
-      try:
-        image = self.data.clipboard
-        if not isinstance(image, Image.Image):
-          image = Image.open(image)
-      except:
-        image = None
-    if image is None:
-      image = self.data.screenshot
-    return image
-  
+  #
+  # Clipboard & misc system controls
+  #
   @toolspec(
-    desc = "Optical character recognition to extract text from image. Category: input, image",
-    args = {"image": {"type": "string", "description": "Image file to OCR. If not specified, clipboard or screenshot will be used automatically."}},
-    reqs = []
-  )
-  def ocr(self, image=None):
-    image = self.selectImage(image)
-    return f"{{status: success, content:{pytesseract.image_to_string(image)}}}"
-  @toolspec(
-    desc = """
-      Performs image processing using vision model. 
-      Clipboard image or screenshot will be used automatically.
-      Category: input, image""",
-    args = {"prompt": {"type": "string", "description": "Prompt for vision model. User prompt will also be available for context."}},
-    reqs = ["prompt"],
-    prompt = "Plan: If clipboard data seems short or not suitable, consider calling vision instead."
-  )
-  def vision(self, prompt, img=None):
-    img = self.selectImage(img)
-    ocr = self.ocr(img)
-    res = self.openai.chat.completions.create(
-      model=self.openai_vision_model,
-      max_tokens=500,
-      messages=[{
-        "role": "system",
-        "content": f"""
-          You are a subordinate function of an assistant called Echo.
-          Echo determined that users request is related to this image and called you.
-          You are not talking to the user directly. Be succint. Avoid pleasentries, appologizing and trivial explanations.
-          OCR data of the image is provided below. 
-          For context the user request to Echo was: {{{self.data.prompt}}}
-          If user request is about textual data take a guess on what's important, extract it from OCR and return it verbatim.
-          If user request is not about text or if OCR data is not useful to the request, proceed as you see fit yourself.
-          <ocr>
-          {ocr}
-          </ocr>
-        """
-        },
-        {
-          "role": "user",
-          "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": f"data:image/png;base64,{b64(img)}"}
-          ]
-        }]
-    )
-    return res.choices[0].message.content
-  @toolspec(
-    desc = "Write text into users clipboard. Should be used to output code, json, csv, commands to run, or data to fill a form. Category: output, text, copy-paste",
-    args = {"text": {"type": "string", "description": "Text to be written into clipboard"}},
-    reqs = ["text"]
+    desc="Write text into users clipboard. Should be used to output code, json, csv, commands to run, or data to fill a form. Category: output, text, copy-paste",
+    args={"text": {"type": "string", "description": "Text to be written into clipboard"}},
+    reqs=["text"]
   )
   def clipboardWrite(self, text):
     self.trace.info("ACTION: Writing text to your clipboard.")
     pyperclip.copy(text)
     return "{status: success}"
-  
-  @toolspec(desc="Read contents of users clipboard. Returns {status:<status>, type:<type of content>, content: <text content>}. Category: input, text, copy-paste")
+
+  @toolspec(
+    desc="Read contents of users clipboard. Returns {status:<status>, type:<type of content>, content: <text content>}. Category: input, text, copy-paste",
+    args={},
+    reqs=[]
+  )
   def clipboardRead(self):
     self.trace.info("ACTION: Attempting to read your clipboard.")
     img = None
@@ -706,7 +634,6 @@ class BaseToolkit(Toolkit):
     try:
       img = ImageGrab.grabclipboard()
     except NotImplementedError as e:
-      # Wayland / missing backend (wl-paste/xclip)
       print(f"Image clipboard not supported on this system: {e}")
     except Exception as e:
       print(f"Error grabbing image from clipboard: {e}")
@@ -719,109 +646,10 @@ class BaseToolkit(Toolkit):
     try:
       text = pyperclip.paste()
       self.data.clipboard = text
-      # use json.dumps to keep JSON valid even if text has quotes/newlines
       return '{"status": "success", "type": "text", "content": ' + json.dumps(text) + '}'
     except Exception as e:
       print(f"Clipboard text read failed: {e}")
       return '{"status": "error", "reason": "Clipboard not accessible"}'
-
-  @toolspec(
-    desc = "Search arxiv for publications. Returns {url:<permalink>, title:<title>, authors:<authors>, summary:<summary>}",
-    args = {
-      "query":  {"type": "string",  "description": "Arxiv query."},
-      "limit":  {"type": "integer", "description": "Optional. Number of results. Default: 10"}
-    },
-    reqs = ["query"]
-  )
-  def arxivSearch(self, query, limit=10):
-    print(f"{query}")
-    client = arxiv.Client()
-    res = client.results(arxiv.Search(
-      query = query,
-      max_results = limit
-    ))
-    entries = []
-    for r in res:
-      entries.append({'url': r.entry_id, 'title':r.title, 'authors':r.authors, 'summary':r.summary})
-    return f"{{status: success, results:{entries}}}"
-  
-  @toolspec(
-    desc = """ Run a research model. Reseach model can access files and run code.
-      Multiple files can be passes in with "files" argument. Supports local files and Arxiv permalinks.
-      Pass research_id to continue research. Creates new research thread if empty.
-    """,
-    args = {
-      "query":  {"type": "string", "description": "Research query."},
-      "files":  {"type": "array",  "description": "Optional. Array of strings. List of files to include in research. Can be local files or Arxiv permalinks.", "items": {"type": "string"}},
-      "research_id":  {"type": "string",  "description": "Optional. Research thread id. If empty, a new research thread will be created."},
-    },
-    reqs = ["query"],
-    prompt = "When researching better results are achieved by reusing existing research thread and uploading multiple files to one thread."
-  )
-  def research(self, query, files=[], research_id=None):
-    ass = None
-    thr = None
-    if not research_id:
-      ass = self.openai.beta.assistants.create(
-        instructions="""
-          You are a research assistant.
-          Your job is to process scientific papers.
-          Display mathematical formulas using MathJax \\[ markdown \\] blocks.
-        """,
-        name  = "Echo research",
-        tools = [{"type": "code_interpreter"}, {"type": "retrieval"}],
-        model = self.openai_research_model
-      )
-      thr = self.openai.beta.threads.create(metadata={'aid':ass.id})
-      print(f"New research context: {thr.id}")
-    else:
-      thr = self.openai.beta.threads.retrieve(research_id)
-      ass = self.openai.beta.assistants.retrieve(thr.metadata['aid'])
-      print(f"Loaded research context: {thr.id}")
-    for file in files:
-      print(f"Loading file: {file}")
-      if not os.path.isfile(file):
-        file = urllib.parse.urlparse(file).path.rsplit("/", 1)[-1]
-        res  = arxiv.Search(id_list=[file])
-        pdf  = next(res.results())
-        file = pdf.download_pdf(dirpath="./downloads/")
-      with open(file, "rb") as f:
-        fid = self.openai.files.create(file = f, purpose = "assistants")
-        self.openai.beta.assistants.files.create(assistant_id = ass.id, file_id = fid.id)
-    print(f"Research query: {query}")
-    ts_s = timer()
-    msg  = self.openai.beta.threads.messages.create(thread_id = thr.id, role="user", content = query)
-    run  = self.openai.beta.threads.runs.create(assistant_id = ass.id, thread_id = thr.id)
-    #time.sleep(5) # FIXME?
-    while run.status != "completed":
-      time.sleep(1)
-      run = self.openai.beta.threads.runs.retrieve(run_id = run.id, thread_id = run.thread_id)
-    msg  = self.openai.beta.threads.messages.list(thread_id=run.thread_id,limit=1).data[0].content[0].text.value
-    ts_e = timer()
-    print(f"... took {ts_e-ts_s}s")
-    return {'research_id': thr.id, 'message': msg}
-
-  @toolspec(
-    desc="Interact with Shodan API. Search for internet-connected devices.",
-    args={
-      "query": {"type": "string", "description": "The search query to pass to Shodan."},
-    },
-    reqs=["query"]
-  )
-  def shodanSearch(self, query):
-    results = self.shodan.search(query)
-    return f"{{status: success, results:{results}}}"
-
-  @toolspec(
-    desc="Interact with Shodan API. Search for internet-connected devices.",
-    args={
-      "ip_address": {"type": "string", "optional": True, "description": "IP address to get host information for."}
-    },
-    reqs=["ip_address"]
-  )
-  def shodanHostInfo(self, ip_address):
-    host_info = self.shodan.host(ip_address)
-    return f"{{status: success, result:{host_info}}}"
 
   @toolspec(
     desc="Change which OpenAI model the toolkit uses at runtime.",
@@ -892,7 +720,6 @@ class BaseToolkit(Toolkit):
     logger = logging.getLogger(logger_name)
     logger.setLevel(lvl)
 
-    # Optionally: also raise root level so everything respects it
     if logger_name == "echo":
       logging.getLogger().setLevel(lvl)
 
@@ -901,11 +728,150 @@ class BaseToolkit(Toolkit):
       "logger": logger_name,
       "level": lvl_str
     }
+
+  @toolspec(
+    desc="Enable or disable remembering previous conversation turns when answering. When disabled, only the latest user prompt is sent to the model.",
+    args={
+      "enabled": {
+        "type": "string",
+        "description": "Set to 'true' to enable history chaining, or 'false' to disable it."
+      }
+    },
+    reqs=["enabled"]
+  )
+  def setHistoryChain(self, enabled):
+    val = enabled.strip().lower()
+    on = val in ("true", "1", "yes", "y", "on")
+
+    self.chain_enabled = on
+
+    return {
+      "status": "success",
+      "chain_enabled": self.chain_enabled
+    }
+
+
+#
+# Extra toolkit (Shodan, research, arxiv, exploit-db, NVD, etc.)
+#
+
+class Toolkit(BaseToolkit):
+  @toolspec(
+    desc="Search arxiv for publications. Returns {url:<permalink>, title:<title>, authors:<authors>, summary:<summary>}",
+    args={
+      "query": {"type": "string", "description": "Arxiv query."},
+      "limit": {"type": "integer", "description": "Optional. Number of results. Default: 10"}
+    },
+    reqs=["query"]
+  )
+  def arxivSearch(self, query, limit=10):
+    print(f"{query}")
+    client = arxiv.Client()
+    res = client.results(arxiv.Search(
+      query=query,
+      max_results=limit
+    ))
+    entries = []
+    for r in res:
+      entries.append({
+        'url': r.entry_id,
+        'title': r.title,
+        'authors': r.authors,
+        'summary': r.summary
+      })
+    return json.dumps({"status": "success", "results": entries})
+
+  @toolspec(
+    desc="""Run a research model. Research model can access files and run code.
+        Multiple files can be passes in with "files" argument. Supports local files and Arxiv permalinks.
+        Pass research_id to continue research. Creates new research thread if empty.
+      """,
+    args={
+      "query": {"type": "string", "description": "Research query."},
+      "files": {"type": "array",
+                "description": "Optional. Array of strings. List of files to include in research. Can be local files or Arxiv permalinks.",
+                "items": {"type": "string"}},
+      "research_id": {"type": "string",
+                      "description": "Optional. Research thread id. If empty, a new research thread will be created."},
+    },
+    reqs=["query"],
+    prompt="When researching better results are achieved by reusing existing research thread and uploading multiple files to one thread."
+  )
+  def research(self, query, files=None, research_id=None):
+    if files is None:
+      files = []
+    ass = None
+    thr = None
+    if not research_id:
+      ass = self.openai.beta.assistants.create(
+        instructions="""
+                You are a research assistant.
+                Your job is to process scientific papers.
+                Display mathematical formulas using MathJax \\[ markdown \\] blocks.
+              """,
+        name="Echo research",
+        tools=[{"type": "code_interpreter"}, {"type": "retrieval"}],
+        model=self.openai_research_model
+      )
+      thr = self.openai.beta.threads.create(metadata={'aid': ass.id})
+      print(f"New research context: {thr.id}")
+    else:
+      thr = self.openai.beta.threads.retrieve(research_id)
+      ass = self.openai.beta.assistants.retrieve(thr.metadata['aid'])
+      print(f"Loaded research context: {thr.id}")
+
+    for file in files:
+      print(f"Loading file: {file}")
+      if not os.path.isfile(file):
+        file_id = urllib.parse.urlparse(file).path.rsplit("/", 1)[-1]
+        res = arxiv.Search(id_list=[file_id])
+        pdf = next(res.results())
+        file = pdf.download_pdf(dirpath="./downloads/")
+      with open(file, "rb") as f:
+        fid = self.openai.files.create(file=f, purpose="assistants")
+        self.openai.beta.assistants.files.create(assistant_id=ass.id, file_id=fid.id)
+
+    print(f"Research query: {query}")
+    ts_s = timer()
+    self.openai.beta.threads.messages.create(thread_id=thr.id, role="user", content=query)
+    run = self.openai.beta.threads.runs.create(assistant_id=ass.id, thread_id=thr.id)
+
+    while run.status != "completed":
+      time.sleep(1)
+      run = self.openai.beta.threads.runs.retrieve(run_id=run.id, thread_id=run.thread_id)
+
+    msg = self.openai.beta.threads.messages.list(thread_id=run.thread_id, limit=1).data[0].content[0].text.value
+    ts_e = timer()
+    print(f"... took {ts_e - ts_s}s")
+    return {'research_id': thr.id, 'message': msg}
+
+  @toolspec(
+    desc="Interact with Shodan API. Search for internet-connected devices.",
+    args={
+      "query": {"type": "string", "description": "The search query to pass to Shodan."},
+    },
+    reqs=["query"]
+  )
+  def shodanSearch(self, query):
+    results = self.shodan.search(query)
+    return json.dumps({"status": "success", "results": results})
+
+  @toolspec(
+    desc="Interact with Shodan API. Get host info for an IP address.",
+    args={
+      "ip_address": {"type": "string", "description": "IP address to get host information for."}
+    },
+    reqs=["ip_address"]
+  )
+  def shodanHostInfo(self, ip_address):
+    host_info = self.shodan.host(ip_address)
+    return json.dumps({"status": "success", "result": host_info})
+
   @toolspec(
     desc=(
-      "Search Exploit-DB (exploit-db.com) for exploits by keyword or CVE. "
-      "Returns a list of exploits with id, description, type, platform, date, "
-      "verified flag, port, tags, author, and link. Uses pyxploitdb."
+            "Search Exploit-DB (exploit-db.com) for exploits by keyword or CVE. "
+            "Returns a list of exploits with id, description, type, platform, date, "
+            "verified flag, port, tags, author, and link. Uses pyxploitdb."
     ),
     args={
       "query": {
@@ -927,9 +893,7 @@ class BaseToolkit(Toolkit):
       })
 
     try:
-      # ✅ Correct call for this library: searchEDB (camelCase)
       results = pyxploitdb.searchEDB(query, _print=False, nb_results=limit)
-
       payload = []
       for e in results:
         payload.append({
@@ -958,9 +922,9 @@ class BaseToolkit(Toolkit):
 
   @toolspec(
     desc=(
-      "Search Exploit-DB specifically by CVE identifier "
-      "(e.g. 'CVE-2006-1234', 'CVE-2021-44228'). "
-      "Uses pyxploitdb.searchCVE under the hood."
+            "Search Exploit-DB specifically by CVE identifier "
+            "(e.g. 'CVE-2006-1234', 'CVE-2021-44228'). "
+            "Uses pyxploitdb.searchCVE under the hood."
     ),
     args={
       "cve": {
@@ -983,7 +947,6 @@ class BaseToolkit(Toolkit):
 
     try:
       results = pyxploitdb.searchCVE(cve, _print=False)
-      # searchCVE may return more than we want; truncate
       results = results[:limit]
 
       payload = []
@@ -1011,11 +974,12 @@ class BaseToolkit(Toolkit):
         "status": "error",
         "error": f"Exploit-DB CVE search failed: {ex}"
       })
+
   @toolspec(
     desc=(
-      "Query the U.S. National Vulnerability Database (NVD) for vulnerabilities. "
-      "Supports keyword, CVE ID, product name, vendor name, etc. "
-      "Requires NVD_API_KEY in .env. Returns normalized list of CVE records."
+            "Query the U.S. National Vulnerability Database (NVD) for vulnerabilities. "
+            "Supports keyword, CVE ID, product name, vendor name, etc. "
+            "Requires NVD_API_KEY in .env. Returns normalized list of CVE records."
     ),
     args={
       "query": {
@@ -1030,9 +994,6 @@ class BaseToolkit(Toolkit):
     reqs=["query"]
   )
   def nvdSearch(self, query, limit=10):
-    """
-    Search NVD (National Vulnerability Database) using API v2.
-    """
     api_key = self.nvd_api_key
     if not api_key:
       return json.dumps({
@@ -1055,7 +1016,6 @@ class BaseToolkit(Toolkit):
       out = []
       for v in data.get("vulnerabilities", []):
         cve = v.get("cve", {})
-
         out.append({
           "id": cve.get("id"),
           "published": cve.get("published"),
@@ -1078,8 +1038,7 @@ class BaseToolkit(Toolkit):
         "error": f"NVD query failed: {ex}"
       })
 
-
-  # ---- helper methods -------
+  # ---- helper methods for NVD -------
   def _extractNvdDescription(self, cve):
     descs = cve.get("descriptions", [])
     for d in descs:
@@ -1125,133 +1084,166 @@ class BaseToolkit(Toolkit):
         "tags": r.get("tags")
       })
     return refs
+
+
+#
+# InterAction (External) – same as before, but based on BaseToolkit
+#
+
+class BaseToolkitHID(BaseToolkit):
+  def __init__(self):
+    super().__init__()
+
   @toolspec(
-    desc = """
-      Install software using a system package manager.
-      Supported managers: apt, apt-get, gem, pip, pip3, npm, dnf, yum, pacman.
-      Use ONLY when the user explicitly asks to install something.
-      """,
-    args = {
-      "manager": {
-        "type": "string",
-        "description": "Package manager to use: apt, apt-get, gem, pip, pip3, npm, dnf, yum, pacman."
-      },
-      "packages": {
-        "type": "string",
-        "description": "One or more package names, separated by spaces (e.g. 'curl git')."
-      },
-      "options": {
-        "type": "string",
-        "description": "Optional extra flags, e.g. '-y' or '--version \\'1.2.3\\''."
-      }
-    },
-    reqs = ["manager", "packages"]
+    desc="""
+        Speak text using text-to-speech. Keep it short and entertaining. Jarvis style banter is welcome.
+        Speak should only be used for very short communication - single sentence summary, remark or progress update.
+        Category: output, audio
+        """,
+    args={"text": {"type": "string", "description": "Text to be spoken. Keep short, one sentence."}},
+    reqs=["text"],
+    prompt="When user says 'say','tell' etc use speak.",
+    state="disabled"
   )
-  def installSoftware(self, manager, packages, options=""):
-    """
-    Install software packages using a system package manager.
+  def speak(self, text):
+    self.trace.info("ACTION: Speaking short response via TTS.")
+    threading.Thread(target=self.localtts, kwargs={'text': text}).start()
+    return "{status: success}"
 
-    SECURITY NOTE:
-    - This runs commands on the host system.
-    - Only enable/use this if you trust the model+prompt, and the environment is yours.
-    """
-    logger = logging.getLogger("echo.toolkit.install")
-
-    manager = manager.strip()
-    options = options or ""
-
-    # Whitelist allowed managers
-    allowed = {"apt", "apt-get", "gem", "pip", "pip3", "npm", "dnf", "yum", "pacman"}
-    if manager not in allowed:
-      return {
-        "status": "error",
-        "error": f"Manager '{manager}' not allowed. Allowed: {sorted(list(allowed))}"
-      }
-
-    # Build base command
-    cmd = [manager]
-
-    # For these managers, auto-add "install" subcommand if not provided
-    auto_install = {"apt", "apt-get", "dnf", "yum", "pacman"}
-    if manager in auto_install:
-      cmd.append("install")
-
-    # Add extra options if given
-    if options.strip():
-      try:
-        cmd.extend(shlex.split(options))
-      except ValueError as e:
-        return {
-          "status": "error",
-          "error": f"Could not parse options: {e}"
-        }
-
-    # Split packages by whitespace into a list
-    pkg_list = [p for p in packages.split() if p.strip()]
-    if not pkg_list:
-      return {
-        "status": "error",
-        "error": "No packages specified after splitting 'packages' by spaces."
-      }
-
-    cmd.extend(pkg_list)
-
-    logger.info("Running install command: %s", cmd)
-
-    try:
-      proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True
+  def stt(self, file=None):
+    if file is None:
+      file = self.data.stt.file
+    with open(file, "rb") as f:
+      return self.openai.audio.transcriptions.create(
+        model=self.openai_stt_model,
+        file=f,
+        response_format="text"
       )
-    except FileNotFoundError:
-      return {
-        "status": "error",
-        "error": f"Command '{manager}' not found on this system."
-      }
-    except Exception as e:
-      logger.exception("installSoftware raised exception")
-      return {
-        "status": "error",
-        "error": f"Exception while running install: {e}"
-      }
 
-    result = {
-      "status": "success" if proc.returncode == 0 else "error",
-      "returncode": proc.returncode,
-      "command": cmd,
-      "stdout": proc.stdout,
-      "stderr": proc.stderr
-    }
-
-    # Log a short summary
-    if proc.returncode == 0:
-      logger.info("Install succeeded: %s", cmd)
-    else:
-      logger.warning("Install failed (rc=%s): %s", proc.returncode, cmd)
-
-    return result
+  def localtts(self, text):
+    engine = pyttsx3.init()
+    engine.say(text)
+    engine.runAndWait()
+    return "{status: success}"
 
   @toolspec(
-    desc = "Enable or disable remembering previous conversation turns when answering. When disabled, only the latest user prompt is sent to the model.",
-    args = {
-      "enabled": {
-        "type": "string",
-        "description": "Set to 'true' to enable history chaining, or 'false' to disable it."
-      }
-    },
-    reqs = ["enabled"]
+    desc="Get input from speech-to-text. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, audio",
+    args={},
+    reqs=[]
   )
-  def setHistoryChain(self, enabled):
-    """
-    Toggle whether the assistant uses previous conversation turns as context.
-    """
-    val = enabled.strip().lower()
-    on = val in ("true", "1", "yes", "y", "on")
+  def listen(self):
+    self.trace.info("ACTION: Starting microphone capture for speech input.")
+    if self.data.stt is None:
+      rec = sr.Recognizer()
+      mic = sr.Microphone()
+      self.data.stt = AttrDict({'rec': rec, 'mic': mic, 'file': './stt.mp3'})
+      with mic:
+        rec.adjust_for_ambient_noise(mic)
+    with self.data.stt.mic:
+      audio = self.data.stt.rec.listen(self.data.stt.mic)
+    with open(self.data.stt.file, "wb") as f:
+      f.write(audio.get_wav_data(convert_rate=44100))
 
-    self.chain_enabled = on
 
-    return {
-      "status": "success",
-      "chain_enabled": self.chain_enabled
-    }
+class BaseToolkitOSID(BaseToolkit):
+  def __init__(self):
+    super().__init__()
+
+  def screenshot(self, title=None):
+    self.trace.info("ACTION: Capturing your screen (primary monitor).")
+    with mss.mss() as sct:
+      monitor = sct.monitors[1]  # 0 = all, 1 = primary
+      img = sct.grab(monitor)
+      img_pil = Image.frombytes("RGB", img.size, img.rgb)
+      self.data.screenshot = img_pil
+    return "{status: success}"
+
+  def selectImage(self, image=None):
+    if image is None:
+      try:
+        image = self.data.clipboard
+        if not isinstance(image, Image.Image):
+          image = Image.open(image)
+      except:
+        image = None
+    if image is None:
+      image = self.data.screenshot
+    return image
+
+  @toolspec(
+    desc="Optical character recognition to extract text from image. Category: input, image",
+    args={"image": {"type": "string",
+                    "description": "Image file to OCR. If not specified, clipboard or screenshot will be used automatically."}},
+    reqs=[]
+  )
+  def ocr(self, image=None):
+    image = self.selectImage(image)
+    return f"{{status: success, content:{pytesseract.image_to_string(image)}}}"
+
+  @toolspec(
+    desc="""
+        Performs image processing using vision model. 
+        Clipboard image or screenshot will be used automatically.
+        Category: input, image""",
+    args={"prompt": {"type": "string",
+                     "description": "Prompt for vision model. User prompt will also be available for context."}},
+    reqs=["prompt"],
+    prompt="Plan: If clipboard data seems short or not suitable, consider calling vision instead."
+  )
+  def vision(self, prompt, img=None):
+    img = self.selectImage(img)
+    ocr = self.ocr(img)
+    res = self.openai.chat.completions.create(
+      model=self.openai_vision_model,
+      max_tokens=500,
+      messages=[{
+        "role": "system",
+        "content": f"""
+              You are a subordinate function of an assistant called Echo.
+              Echo determined that users request is related to this image and called you.
+              You are not talking to the user directly. Be succint. Avoid pleasentries, appologizing and trivial explanations.
+              OCR data of the image is provided below. 
+              For context the user request to Echo was: {{{self.data.prompt}}}
+              If user request is about textual data take a guess on what's important, extract it from OCR and return it verbatim.
+              If user request is not about text or if OCR data is not useful to the request, proceed as you see fit yourself.
+              <ocr>
+              {ocr}
+              </ocr>
+            """
+      },
+        {
+          "role": "user",
+          "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": f"data:image/png;base64,{b64(img)}"}
+          ]
+        }]
+    )
+    return res.choices[0].message.content
+
+class FullToolkit(Toolkit, BaseToolkitHID, BaseToolkitOSID):
+  def __init__(self):
+    super().__init__()  # MRO will walk: FullToolkit → Toolkit → BaseToolkitHID → BaseToolkitOSID → BaseToolkit → BaseCoreToolkit
+
+def create_toolkit(mode: str = "system"):
+  """
+  Small factory to get a toolkit instance:
+  - system  -> BaseToolkit (minimal, safe)
+  - extra   -> Toolkit (BaseToolkit + security/research tools)
+  - hid     -> BaseToolkitHID (audio I/O)
+  - os      -> BaseToolkitOSID (screen/vision/OCR)
+  - full    -> FullToolkit (everything)
+  """
+  m = (mode or "system").lower()
+  if m == "system":
+    return BaseToolkit()
+  if m == "extra":
+    return Toolkit()
+  if m == "hid":
+    return BaseToolkitHID()
+  if m == "os":
+    return BaseToolkitOSID()
+  if m == "full":
+    return FullToolkit()
+  # fallback
+  return BaseToolkit()
