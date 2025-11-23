@@ -76,16 +76,19 @@ Open `wsClient.html` for live logs.
 # Architecture
 Tech stack:
  - Legacy
-   - TTS/SST Whisper 
-   - GPT-4 
-   - GPT-4-Vision + Tesseract 
+   - `TTS` Whisper 
+   - `Chat` GPT-4 
+   - `vision` GPT-4-Vision + Tesseract 
    - GPT-4 Assistants + pyttsx3
+   - `research` gpt-4-turbo
  - Modern
-   - TTS/SST gpt-4o-mini-transcribe
-   - GPT-5-mini
-   - GPT-5.1/5
+   - `TTS` gpt-4o-mini-transcribe
+   - `Chat` <GPT-5-mini
+   - `vision` GPT-5 + Tesseract 
+   - `research`GPT-5.1
 
-I prefer ElevenLabs TTS quality, but I daily drive local TTS for lower latency.
+-  STT
+    - I prefer ElevenLabs quality, but I daily drive local for lower latency.
 
 GPT is used as a decision-maker to collect data, execute various subordinate functions and present results back to you.
 
