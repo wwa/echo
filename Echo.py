@@ -29,8 +29,11 @@ MODEL_CONTEXT_LIMITS = {
 _ws_loop = None
 _ws_streams = {}
 
-
 class WebSocketLogHandler(logging.Handler):
+    """
+    Logging handler that forwards formatted log records
+    into a dedicated asyncio queue for a named stream.
+    """
     def __init__(self, stream_name, formatter=None):
         super().__init__()
         self.stream_name = stream_name
@@ -60,6 +63,9 @@ class WebSocketLogHandler(logging.Handler):
 
 
 async def _ws_broadcaster(stream_name: str):
+    """
+    Take log messages from the stream queue and broadcast to all connected clients.
+    """
     stream = _ws_streams[stream_name]
     queue = stream["queue"]
     clients = stream["clients"]
@@ -83,34 +89,54 @@ async def _ws_broadcaster(stream_name: str):
                 pass
 
 
-async def _ws_handler(websocket, path):
+async def _ws_handler(connection):
     """
-    Single server handler. Chooses stream based on URL path:
+    Single server handler (websockets >= 14).
+    We route by URL path:
+
       /app   -> 'app'
       /llm   -> 'llm'
       /trace -> 'trace'
       /tools -> 'tools'
+
+    Anything else falls back to 'app' so that clients
+    still get logs instead of silent disconnects.
     """
+    # Safely get path from the request
+    request = getattr(connection, "request", None)
+    raw_path = getattr(request, "path", "/") if request is not None else "/"
+
+    # Strip query string and leading/trailing slashes
+    path = raw_path.split("?", 1)[0]
     p = (path or "/").strip("/")
-    stream_name = p if p else "app"
+
+    # Map to stream; unknown paths => 'app'
+    if p in _ws_streams:
+        stream_name = p
+    elif p == "" or p == "/":
+        stream_name = "app"
+    else:
+        # Unknown path => just use app instead of closing
+        stream_name = "app"
 
     stream = _ws_streams.get(stream_name)
-    if not stream:
-        try:
-            await websocket.close(code=1008, reason=f"Unknown log stream '{stream_name}'")
-        except Exception:
-            pass
-        return
-
     clients = stream["clients"]
-    clients.add(websocket)
+    clients.add(connection)
+
+    # Optional: debug-log new connection
+    logging.getLogger("echo.trace").debug(
+        "WS client connected: path=%s -> stream=%s", raw_path, stream_name
+    )
 
     try:
-        async for _ in websocket:
+        async for _ in connection:
             # Ignore incoming messages
             pass
     finally:
-        clients.discard(websocket)
+        clients.discard(connection)
+        logging.getLogger("echo.trace").debug(
+            "WS client disconnected: path=%s -> stream=%s", raw_path, stream_name
+        )
 
 
 def _start_ws_server(host: str, port: int, stream_names):
@@ -128,17 +154,19 @@ def _start_ws_server(host: str, port: int, stream_names):
                 "clients": set(),
             }
 
-        # start one broadcaster per stream
         for name in stream_names:
             asyncio.create_task(_ws_broadcaster(name))
 
         async with websockets.serve(_ws_handler, host, port):
             print(f"[WS-LOG] WebSocket log server on ws://{host}:{port}")
             print("[WS-LOG] Streams: " + ", ".join(f"/{n}" for n in stream_names))
+            # Run forever
             await asyncio.Future()
 
-    loop.run_until_complete(server_main())
-
+    try:
+        loop.run_until_complete(server_main())
+    finally:
+        loop.close()
 
 def estimate_tokens_from_messages(messages):
     total_chars = 0
@@ -450,7 +478,7 @@ if __name__ == "__main__":
         ws_port = int(os.getenv("WEBSOCKET_LOG_PORT", "9876"))
 
         try:
-            import websockets  # noqa: F401  (dependency check)
+            import websockets  # dependency check
 
             # Map stream names to logger names
             ws_streams_cfg = {
@@ -479,6 +507,9 @@ if __name__ == "__main__":
                 f"WebSocket log streaming enabled at ws://{ws_host}:{ws_port} "
                 f"with paths /app, /llm, /trace, /tools"
             )
+
+            # Optional: quick test message
+            logging.getLogger("echo").info("WS streaming: test log from 'echo'")
 
         except ImportError:
             print(
