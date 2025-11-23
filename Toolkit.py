@@ -650,52 +650,61 @@ class BaseCoreToolkit:
 
     # ---------------- RESPONSES ----------------
     if backend == "responses":
-      kwargs.pop("tool_choice", None)
+        # /responses ignores tool_choice, so drop it
+        kwargs.pop("tool_choice", None)
 
-      input_items = self._messages_to_responses_input(messages)
-      tools_for_responses = self._tools_for_responses(tools)
+        input_items = self._messages_to_responses_input(messages)
+        tools_for_responses = self._tools_for_responses(tools)
 
-      res = self.openai.responses.create(
-        model=self.openai_chat_model,
-        input=input_items,
-        tools=tools_for_responses,
-        **kwargs,
-      )
+        res = self.openai.responses.create(
+            model=self.openai_chat_model,
+            input=input_items,
+            tools=tools_for_responses,
+            **kwargs,
+        )
 
-      finish_reason = None
-      message_like = None
+        # --------- extract text in a robust way ----------
+        text = None
+        # 1) Preferred: use the convenience attribute if present
+        text = getattr(res, "output_text", None)
 
-      try:
-        if getattr(res, "output", None):
-          first = res.output[0]
-          raw_reason = getattr(first, "stop_reason", None)
+        # 2) Fallback: manually walk res.output
+        if not text:
+            chunks = []
+            output = getattr(res, "output", None) or []
+            for item in output:
+                # We only care about message items, skip reasoning, etc.
+                if getattr(item, "type", None) == "message":
+                    for c in getattr(item, "content", []) or []:
+                        if hasattr(c, "text") and c.text:
+                            chunks.append(c.text)
+            text = "\n".join(chunks) if chunks else ""
 
-          # Map Responses stop_reason
-          if raw_reason == "tool_use":
-            finish_reason = "tool_calls"
-          else:
-            finish_reason = "stop"
+        # --------- normalize stop_reason to your old semantics ----------
+        finish_reason = "stop"   # sensible default
+        output = getattr(res, "output", None) or []
+        if output:
+            first = output[0]
+            raw_reason = getattr(first, "stop_reason", None)
+            if raw_reason == "tool_use":
+                finish_reason = "tool_calls"
+            else:
+                # end_turn, max_output, etc → treat as stop
+                finish_reason = "stop"
 
-          role = getattr(first, "role", "assistant")
-          text = ""
-          for c in getattr(first, "content", []) or []:
-            if hasattr(c, "text") and c.text is not None:
-              text = c.text
-              break
-
-          message_like = AttrDict({
-            "role": role,
+        # Build assistant-like message wrapper so modelOne can use it
+        from types import SimpleNamespace as AttrDict
+        message_like = AttrDict({
+            "role": "assistant",
             "content": text,
-          })
-      except Exception:
-        pass
+        })
 
-      return {
-        "backend": "responses",
-        "raw": res,
-        "finish_reason": finish_reason,
-        "message": message_like,
-      }
+        return {
+            "backend": "responses",
+            "raw": res,
+            "finish_reason": finish_reason,
+            "message": message_like,
+        }
 
     raise ValueError(f"Unknown llm_backend: {backend!r}")
 
