@@ -304,13 +304,36 @@ class Toolkit:
       }],
     }, res]
   
-  @toolspec(desc="Lists functions available in toolkit. Lists only disabled function by default.")
-  def listTools(self, disabled=True):
+  @toolspec(
+    desc="List toolkit functions and their current state. "
+         "Mode can be 'disabled' (default), 'enabled', or 'all'.",
+    args={
+      "mode": {
+        "type": "string",
+        "description": "Filter mode: 'disabled' (default), 'enabled', or 'all'."
+      }
+    },
+    reqs=[]
+  )
+  def listTools(self, mode="disabled"):
     tools = []
-    for name in self._toolspec:
-      tool = self._toolspec[name]
-      if tool.state == 'disabled' or not disabled:
-        tools.append({'name': name, 'description': tool.spec['function']['description'], 'state':tool.state})
+    mode = (mode or "disabled").lower()
+
+    for name, tool in self._toolspec.items():
+      state = tool.state
+
+      if mode == "disabled" and state != "disabled":
+        continue
+      if mode == "enabled" and state != "enabled":
+        continue
+      # mode == "all" → no filter
+
+      tools.append({
+        "name": name,
+        "description": tool.spec["function"]["description"],
+        "state": state,
+      })
+
     return tools
   
   @toolspec(

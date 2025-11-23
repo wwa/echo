@@ -184,6 +184,8 @@ if __name__ == "__main__":
         toolkit.toggleTool('listen', 'disabled')
     if os.getenv("ENABLE_SPEAK", "false").lower() == "false":
         toolkit.toggleTool('speak', 'disabled')
-
+    if os.getenv("ENABLE_CLIPBOARD", "false").lower() == "false":
+        toolkit.toggleTool('clipboardRead', 'disabled')
+        toolkit.toggleTool('clipboardWrite', 'disabled')
 
     mainLoop(toolkit)

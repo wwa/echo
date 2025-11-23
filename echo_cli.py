@@ -1,13 +1,26 @@
 import traceback
 
 helpText = (
-    "Type 'history' to see conversation history. \n"
-    "Type 'clear' to clear history. \n"
-    "Type 'reset' to reset all tools. \n\n"
-    "Type 'chain on/off' to enable or disable conversation history chaining. \n"
-    "Type 'log LEVEL' to change log verbose lvl. \n"
-    "Type 'profile NAME' to switch LLM model profile, e.g. 'profile legacy' or 'profile current'. \n\n"
-    "Type 'exit' to quit if you need rest. \n\n")
+    "Available commands:\n"
+    "  history                - Show conversation history\n"
+    "  clear                  - Clear conversation history\n"
+    "  reset                  - Reset all toolkit state\n"
+    "  exit                   - Quit ECHO\n\n"
+
+    "LLM / Runtime Controls:\n"
+    "  chain on|off           - Enable or disable history chaining\n"
+    "  log LEVEL              - Change log verbosity (debug/info/warning/error/critical)\n"
+    "  profile NAME           - Switch model profile (e.g. 'profile current')\n\n"
+
+    "Toolkit Commands:\n"
+    "  listtools              - List all tools\n"
+    "  listtools disabled     - List only disabled tools\n"
+    "  listtools enabled      - List only enabled tools\n"
+    "  toggletool NAME STATE  - Enable or disable a tool (STATE = enabled|disabled)\n\n"
+
+    "Utility:\n"
+    "  testcmd                - Run vulnerability DB test prompt\n"
+)
 
 def promptOption(prompt, history, toolkit):
     if prompt.lower() in ("exit", "e"):
@@ -70,6 +83,41 @@ def promptOption(prompt, history, toolkit):
                 print(f"Unknown profile '{profile}'. Available: {', '.join(toolkit.model_profiles.keys())}")
         else:
             print("Toolkit does not support model profiles.")
+        return "continue"
+    elif prompt.lower().startswith("listtools"):
+        parts = prompt.split()
+        mode = parts[1].lower() if len(parts) > 1 else "all"
+
+        if mode == "disabled":
+            tools = toolkit.listTools()
+        elif mode == "enabled":
+            tools = toolkit.listTools(mode="enabled")
+        else:
+            tools = toolkit.listTools(mode="all")
+
+        print("\nToolkit Tools:")
+        print(mode)
+        for t in tools:
+            print(f" - {t['name']}  [{t['state']}]")
+        print()
+        return "continue"
+
+
+    elif prompt.lower().startswith("toggletool"):
+        parts = prompt.split()
+        if len(parts) < 3:
+            print("Usage: toggletool <name> <enabled|disabled>")
+            return "continue"
+
+        name = parts[1]
+        state = parts[2].lower()
+
+        if state not in ("enabled", "disabled"):
+            print("State must be: enabled or disabled")
+            return "continue"
+
+        res = toolkit.toggleTool(name, state)
+        print(f"Tool '{name}' set to state '{state}'. Result: {res}")
         return "continue"
 
     elif prompt.lower() == "testcmd":
