@@ -65,18 +65,32 @@ def modelOne(toolkit, messages):
 
     reason = llm_res["finish_reason"]
     message = llm_res["message"]
+    backend = llm_res["backend"]
 
     if reason == "stop":
-        messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'tool_calls'})))
-        return reason, message.content, messages
+        if backend == "completions":
+            messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'tool_calls'})))
+            content = message.content
+        else:  # responses backend
+            messages.append({
+                "role": message.role,
+                "content": message.content,
+            })
+            content = message.content
 
-    if reason == "tool_calls":
+        return reason, content, messages
+
+    if reason == "tool_calls" and backend == "completions":
         messages.append(json.loads(message.model_dump_json(exclude={'function_call', 'content'})))
         for tc in message.tool_calls:
             if tc.type == "function":
                 messages.append(toolkit.call(tc.id, tc.function))
 
-    return reason, None, messages
+        return reason, None, messages
+
+    # Responses currently doesn't do client-side tool chaining in your code,
+    # so we just treat any non-stop as stop to avoid loops:
+    return "stop", getattr(message, "content", None), messages
 
 def modelLoop(toolkit, history=[]):
   trace = logging.getLogger("echo.trace")

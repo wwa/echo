@@ -434,6 +434,76 @@ class BaseCoreToolkit:
       print(f"Warning: could not persist {key} to .env: {e}")
       return False
 
+  def _tools_for_responses(self, tools):
+    if not tools:
+      return []
+
+    converted = []
+    for t in tools:
+      if isinstance(t, dict) and t.get("type") == "function" and "function" in t:
+        fn = t["function"] or {}
+        converted.append({
+          "type": "function",
+          "name": fn.get("name"),
+          "description": fn.get("description", ""),
+          "parameters": fn.get("parameters", {
+            "type": "object",
+            "properties": {},
+            "required": [],
+          }),
+        })
+      else:
+        converted.append(t)
+    return converted
+
+  def _messages_to_responses_input(self, messages):
+    input_items = []
+
+    for m in messages:
+      if not isinstance(m, dict):
+        continue
+
+      role = m.get("role")
+
+      # /responses does NOT accept role "tool"
+      if role == "tool":
+        continue
+
+      # Skip assistant stub that only carries tool_calls
+      if role == "assistant" and m.get("tool_calls"):
+        continue
+
+      content = m.get("content", "")
+
+      if isinstance(content, str):
+        text = content
+      elif isinstance(content, list):
+        parts = []
+        for part in content:
+          if isinstance(part, dict) and "text" in part:
+            parts.append(part["text"])
+        text = "\n".join(parts) if parts else ""
+      else:
+        text = str(content)
+
+      if role not in ("system", "user", "assistant", "developer"):
+        role = "user"
+
+      if role == "assistant":
+        ctype = "output_text"
+      else:
+        ctype = "input_text"
+
+      input_items.append({
+        "role": role,
+        "content": [{
+          "type": ctype,
+          "text": text,
+        }],
+      })
+
+    return input_items
+
   @toolspec(
     desc="Set or update API keys for external services (OpenAI, Shodan, SerpAPI).",
     args={
@@ -537,72 +607,97 @@ class BaseCoreToolkit:
       "research_model": self.openai_research_model,
       "stt_model": self.openai_stt_model,
     }
+
   def llm_call(self, messages, tools=None, tool_choice="auto", **kwargs):
     """
     Unified LLM call.
-    - If self.llm_backend == "completions": uses chat.completions
-    - If self.llm_backend == "responses": uses responses API
+
+    Returns:
+      {
+        "backend": "chat" | "responses",
+        "raw": <raw SDK response>,
+        "finish_reason": "stop" | "tool_calls" | <other> | None,
+        "message": <primary assistant message-like object>,
+      }
     """
-    if not self.openai:
+    if not getattr(self, "openai", None):
       raise RuntimeError("OpenAI client not initialized")
 
-    tools = tools or []
+    backend = getattr(self, "llm_backend", "chat").lower()
+    tools = tools if tools is not None else self.toolMessage()
 
-    if self.llm_backend == "completions":
+    if "tools" in kwargs:
+      if not tools:
+        tools = kwargs["tools"]
+      kwargs.pop("tools")
+
+    # ---------------- CHAT COMPLETIONS ----------------
+    if backend == "completions":
       res = self.openai.chat.completions.create(
         model=self.openai_chat_model,
         messages=messages,
         tools=tools,
         tool_choice=tool_choice,
-        **kwargs
+        **kwargs,
       )
       choice = res.choices[0]
       return {
+        "backend": "chat",
+        "raw": res,
         "finish_reason": choice.finish_reason,
         "message": choice.message,
-        "raw": res,
       }
 
-    elif self.llm_backend == "responses":
-      # Map chat-style messages → responses-style input
-      # (Assumes content is either a string or already a list of content parts)
-      input_blocks = []
-      for m in messages:
-        content = m.get("content", "")
-        if isinstance(content, str):
-          content_parts = [{"type": "input_text", "text": content}]
-        else:
-          content_parts = content
-        input_blocks.append({
-          "role": m["role"],
-          "content": content_parts
-        })
+    # ---------------- RESPONSES ----------------
+    if backend == "responses":
+      kwargs.pop("tool_choice", None)
+
+      input_items = self._messages_to_responses_input(messages)
+      tools_for_responses = self._tools_for_responses(tools)
 
       res = self.openai.responses.create(
         model=self.openai_chat_model,
-        input=input_blocks,
-        tools=tools,
-        **kwargs
+        input=input_items,
+        tools=tools_for_responses,
+        **kwargs,
       )
 
-      output = res.output[0]  # first step
-      stop_reason = getattr(output, "stop_reason", None)
+      finish_reason = None
+      message_like = None
 
-      message = None
-      for c in output.content:
-        if getattr(c, "type", None) in ("output_text", "message"):  # depends on SDK
-          message = c
-          break
+      try:
+        if getattr(res, "output", None):
+          first = res.output[0]
+          raw_reason = getattr(first, "stop_reason", None)
+
+          # Map Responses stop_reason
+          if raw_reason == "tool_use":
+            finish_reason = "tool_calls"
+          else:
+            finish_reason = "stop"
+
+          role = getattr(first, "role", "assistant")
+          text = ""
+          for c in getattr(first, "content", []) or []:
+            if hasattr(c, "text") and c.text is not None:
+              text = c.text
+              break
+
+          message_like = AttrDict({
+            "role": role,
+            "content": text,
+          })
+      except Exception:
+        pass
 
       return {
-        "finish_reason": stop_reason,
-        "message": message,
+        "backend": "responses",
         "raw": res,
+        "finish_reason": finish_reason,
+        "message": message_like,
       }
 
-    else:
-      raise ValueError(f"Unknown llm_backend: {self.llm_backend}")
-
+    raise ValueError(f"Unknown llm_backend: {backend!r}")
 
 #
 # BaseToolkit (system toolkit: decorator mgmt + IO + console + clipboard, etc.)
