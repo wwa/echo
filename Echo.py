@@ -7,20 +7,8 @@ from dotenv import load_dotenv
 
 #Own
 from Toolkit import BaseToolkit
-from ws_logging import setup_ws_log_streaming
-
-MODEL_CONTEXT_LIMITS = {
-    "gpt-4-turbo-preview": 128000,
-    "gpt-4.1": 128000,
-    "gpt-4.1-mini": 128000,
-    "gpt-4.1-small": 128000,
-    "gpt-4o": 128000,
-    "gpt-4o-mini": 128000,
-    "gpt-4o-mini-transcribe": 16000,
-    "gpt-5-mini": 400000,
-    "gpt-5": 400000,
-    "gpt-5.1": 400000,
-}
+from echo_config import init_logging_and_ws, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT
+from echo_cli import promptOption
 
 def estimate_tokens_from_messages(messages):
     total_chars = 0
@@ -103,7 +91,10 @@ def modelLoop(toolkit, history=[]):
   if getattr(toolkit, "chain_enabled", True) and history_messages:
     try:
       used_tokens = estimate_tokens_from_messages(history_messages)
-      max_tokens = MODEL_CONTEXT_LIMITS.get(toolkit.openai_chat_model, 128000)
+      max_tokens = MODEL_CONTEXT_LIMITS.get(
+          toolkit.openai_chat_model,
+          DEFAULT_CONTEXT_LIMIT,
+      )
       threshold = int(max_tokens * CONTEXT_WARN_THRESHOLD)
 
       if used_tokens >= threshold:
@@ -145,81 +136,6 @@ def modelLoop(toolkit, history=[]):
 
   history.append(messages)
   return content, history
-
-def promptOption(prompt, history, helpText, toolkit):
-  loopBehav = ""
-
-  if (prompt == "exit" or prompt == "Exit" or prompt == "e"):
-    print("Goodbye!")
-    loopBehav = "break"
-  elif (prompt == "history" or prompt == "History" or prompt == "hh"):
-    print(history)
-    loopBehav = "continue"
-  elif (prompt == "clear" or prompt == "Clear" or prompt == "c"):
-    history = []
-    loopBehav = "continue"
-  elif (prompt == "reset" or prompt == "Reset" or prompt == "r"):
-    toolkit.reset()
-    print("All tools reset.")
-    loopBehav = "continue"
-  elif (prompt == "help" or prompt == "?" or prompt == "Help" or prompt == "h"):
-    print(helpText)
-    loopBehav = "continue"
-  elif prompt.lower().startswith("log "):
-    parts = prompt.split()
-    if len(parts) >= 2:
-      level_name = parts[1].upper()
-      if level_name in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
-        logger = logging.getLogger("echo")
-        logger.setLevel(getattr(logging, level_name))
-        logging.getLogger().setLevel(getattr(logging, level_name))
-
-        print(f"Log level changed to {level_name}")
-      else:
-        print("Unknown log level. Use one of: debug, info, warning, error, critical.")
-    else:
-      print("Usage: log <level>, e.g. 'log debug' or 'log info'")
-    loopBehav = "continue"
-  elif prompt.lower().startswith("chain "):
-    parts = prompt.split()
-    if len(parts) >= 2:
-      mode = parts[1].lower()
-      if mode in ("on", "off"):
-        toolkit.chain_enabled = (mode == "on")
-        print(f"Conversation history chaining is now {'ENABLED' if toolkit.chain_enabled else 'DISABLED'}.")
-      else:
-        print("Usage: chain on|off")
-    else:
-      print("Usage: chain on|off")
-    loopBehav = "continue"
-  elif prompt.lower().startswith("profile "):
-    parts = prompt.split()
-    if len(parts) >= 2:
-      profile = parts[1].lower()
-      if hasattr(toolkit, "_apply_model_profile"):
-        ok = toolkit._apply_model_profile(profile)
-        if ok:
-          print(f"Model profile switched to '{profile}'.")
-          print("Active models:")
-          print(f"  chat    : {toolkit.openai_chat_model}")
-          print(f"  vision  : {toolkit.openai_vision_model}")
-          print(f"  research: {toolkit.openai_research_model}")
-          print(f"  stt     : {toolkit.openai_stt_model}")
-        else:
-          print(f"Unknown profile '{profile}'. Available: {', '.join(toolkit.model_profiles.keys())}")
-      else:
-        print("Toolkit does not support model profiles.")
-    else:
-      print("Usage: profile <name>, e.g. 'profile legacy' or 'profile current'")
-    loopBehav = "continue"
-  elif prompt.lower() == "testcmd":
-    # Special test command: override user prompt with fixed vulnDb test string
-    test_prompt = "I want top 10 vulndb for wordpress"
-    toolkit.data.prompt = test_prompt
-    print(f"[TestCmd] Using test prompt: {test_prompt}")
-    loopBehav = "test_vuln"
-
-  return loopBehav
 
 def mainLoop(toolkit, limit=10):
   history = []
@@ -263,112 +179,18 @@ def mainLoop(toolkit, limit=10):
       pass
 
 if __name__ == "__main__":
-    LOG_DIR = "logs"
-    os.makedirs(LOG_DIR, exist_ok=True)
-
-    # root logger
-    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
-    log_level = getattr(logging, level_name, logging.INFO)
-
-    root = logging.getLogger()
-    root.setLevel(log_level)
-    root.handlers.clear()
-
-    log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    formatter = logging.Formatter(log_format)
-
-    # handlers
-    important_handler = logging.FileHandler(os.path.join(LOG_DIR, "important.log"))
-    important_handler.setLevel(logging.INFO)
-    important_handler.setFormatter(formatter)
-
-    other_handler = logging.FileHandler(os.path.join(LOG_DIR, "other.log"))
-    other_handler.setLevel(logging.DEBUG)
-    other_handler.setFormatter(formatter)
-
-    llm_handler = logging.FileHandler(os.path.join(LOG_DIR, "llm.log"))
-    llm_handler.setLevel(logging.DEBUG)
-    llm_handler.setFormatter(formatter)
-
-    trace_handler = logging.FileHandler(os.path.join(LOG_DIR, "trace.log"))
-    trace_handler.setLevel(logging.DEBUG)
-    trace_handler.setFormatter(formatter)
-
-    tools_handler = logging.FileHandler(os.path.join(LOG_DIR, "tools.log"))
-    tools_handler.setLevel(logging.DEBUG)
-    tools_handler.setFormatter(formatter)
-
-    echo_logger = logging.getLogger("echo")
-    echo_logger.setLevel(logging.DEBUG)
-    echo_logger.handlers.clear()
-    echo_logger.addHandler(important_handler)
-    echo_logger.addHandler(other_handler)
-    echo_logger.propagate = False
-
-    llm_logger = logging.getLogger("echo.llm")
-    llm_logger.setLevel(logging.DEBUG)
-    llm_logger.handlers.clear()
-    llm_logger.addHandler(llm_handler)
-    llm_logger.propagate = False
-
-    trace_logger = logging.getLogger("echo.trace")
-    trace_logger.setLevel(logging.DEBUG)
-    trace_logger.handlers.clear()
-    trace_logger.addHandler(trace_handler)
-    trace_logger.propagate = False
-
-    toolkit_logger = logging.getLogger("echo.toolkit")
-    toolkit_logger.setLevel(logging.DEBUG)
-    toolkit_logger.handlers.clear()
-    toolkit_logger.addHandler(tools_handler)    # tools.log (DEBUG+)
-    toolkit_logger.propagate = False
-
-    # ---------------------------------------
-    # Optional WebSocket log streaming (one server, multiple paths)
-    # ---------------------------------------
-    ws_enabled = os.getenv("WEBSOCKET_LOG_ENABLED", "false").lower() == "true"
-    if ws_enabled:
-        ws_host = os.getenv("WEBSOCKET_LOG_HOST", "127.0.0.1")
-        ws_port = int(os.getenv("WEBSOCKET_LOG_PORT", "9876"))
-
-        # Map stream names to logger names (same as before)
-        ws_streams_cfg = {
-            "app":   "echo",
-            "llm":   "echo.llm",
-            "trace": "echo.trace",
-            "tools": "echo.toolkit",
-        }
-
-        try:
-            # websockets import happens inside ws_logging._start_ws_server
-            setup_ws_log_streaming(ws_host, ws_port, ws_streams_cfg, formatter)
-        except ImportError:
-            print(
-                "⚠️  WEBSOCKET_LOG_ENABLED=true but 'websockets' package is not installed. "
-                "Disable it or run: pip install websockets"
-            )
-        except Exception as e:
-            print(f"⚠️  Failed to start WebSocket log server: {e}")
-
-    logger = logging.getLogger("echo")
-    logger.info("Starting ECHO...")
-
-    try:
-        CONTEXT_WARN_THRESHOLD = float(os.getenv("CONTEXT_WARN_THRESHOLD", "0.90"))
-        if not (0 < CONTEXT_WARN_THRESHOLD < 1):
-            print("⚠️  Invalid CONTEXT_WARN_THRESHOLD in .env, using default 0.90")
-            CONTEXT_WARN_THRESHOLD = 0.90
-    except:
-        print("⚠️  Failed to parse CONTEXT_WARN_THRESHOLD, using default 0.90")
-        CONTEXT_WARN_THRESHOLD = 0.90
+    # All logging + WS setup + CONTEXT_WARN_THRESHOLD comes from config helper
+    CONTEXT_WARN_THRESHOLD = init_logging_and_ws()
 
     # ---------------------------------------
     # Start toolkit
     # ---------------------------------------
     toolkit = BaseToolkit()
     if not toolkit.openai:
-      raise Exception('OpenAI API not initialized')
-    # Turn audio off for console I/O:
-    # toolkit.toggleTool('listen','disabled')
-    # toolkit.toggleTool('speak','disabled')
+        raise Exception('OpenAI API not initialized')
+
+    # Turn audio off for console I/O if you want:
+    # toolkit.toggleTool('listen', 'disabled')
+    # toolkit.toggleTool('speak', 'disabled')
+
     mainLoop(toolkit)
