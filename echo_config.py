@@ -19,6 +19,7 @@ MODEL_CONTEXT_LIMITS = {
     "gpt-5.1": 400000,
 }
 
+HISTORY_ENTRIES_LIMIT = int(os.getenv("HISTORY_ENTRIES_LIMIT", "50"))
 
 def init_logging_and_ws():
     """

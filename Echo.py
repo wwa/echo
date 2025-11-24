@@ -7,7 +7,12 @@ from dotenv import load_dotenv
 
 #Own
 from Toolkit import BaseToolkit, FullToolkit
-from echo_config import init_logging_and_ws, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT
+from echo_config import (
+    init_logging_and_ws,
+    MODEL_CONTEXT_LIMITS,
+    DEFAULT_CONTEXT_LIMIT,
+    HISTORY_ENTRIES_LIMIT,
+)
 from echo_cli import promptOption, helpText
 
 def estimate_tokens_from_messages(messages):
@@ -162,8 +167,7 @@ def mainLoop(toolkit, limit=10):
 
   while True:
     try:
-      print(">> ", end="")
-      prompt = toolkit.input()
+      prompt = toolkit.input(">> ")
 
       lOps = promptOption(prompt, history, toolkit)
       if lOps == "break":

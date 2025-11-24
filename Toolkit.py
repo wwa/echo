@@ -8,6 +8,12 @@ from dotenv import load_dotenv
 from timeit import default_timer as timer
 import logging
 
+import atexit
+try:
+  import readline   # on Windows, install: pip install pyreadline3
+except ImportError:
+  readline = None
+
 # Tool imports
 import time
 import os
@@ -33,6 +39,11 @@ import shodan
 import serpapi
 import arxiv
 import pyxploitdb
+
+#Tool import tools
+from echo_config import HISTORY_ENTRIES_LIMIT
+
+
 
 
 class AttrDict(dict):
@@ -715,16 +726,30 @@ class BaseToolkit(BaseCoreToolkit):
     self.serpapi = serpapi.Client()
     self.chain_enabled = True
 
+    self._setup_shell_history()
+    self.history_user = []
+
   @toolspec(
-    desc="Get input from console. Used for primary prompt but can also be called for clarifications/followups/how-to-proceed advice. Category: input, text, console",
-    args={},
+    desc=(
+            "Read a line of text from the console. "
+            "If a prompt string is provided, it will be displayed and used by readline, "
+            "allowing correct shell history navigation with ↑ and ↓ keys. "
+            "This function is normally used internally by the toolkit; "
+            "it is suitable for follow-up questions or clarifications where plain text input is required."
+    ),
+    args={
+      "prompt": {
+        "type": "string",
+        "description": "Optional prompt to show before reading user input."
+      }
+    },
     reqs=[]
   )
-  def read(self):
+  def read(self, prompt=""):
     self.trace.info("ACTION: Reading text from console (input()).")
-    return input()
+    return input(prompt)
 
-  def input(self):
+  def input(self, prompt=""):
     text = None
     if 'listen' in self._toolspec and self._toolspec.listen.state == "enabled":
       self.trace.info("ACTION: Listening to your voice (speech-to-text).")
@@ -733,13 +758,13 @@ class BaseToolkit(BaseCoreToolkit):
       self.trace.info("ACTION: Transcribed your voice input.")
     else:
       self.trace.info("ACTION: Waiting for your console text input.")
-      text = self.read()
+      text = self.read(prompt)
       self.trace.info("ACTION: Received your text input from console.")
 
     self.data.prompt = text
+    self.add_user_history(text)
     self.data.screenshot = None
     self.data.clipboard = None
-
 
     if 'clipboardRead' in self._toolspec and self._toolspec.clipboardRead.state == "enabled":
       self.trace.info("ACTION: Reading clipboard snapshot.")
@@ -756,6 +781,52 @@ class BaseToolkit(BaseCoreToolkit):
 
   def reset(self):
     print("Resetting Toolkit")
+
+  def add_user_history(self, text):
+    if not hasattr(self, "history_user"):
+      self.history_user = []
+
+    self.history_user.append(text)
+    # apply limit from config
+    try:
+      from echo_config import HISTORY_ENTRIES_LIMIT
+      self.history_user = self.history_user[-HISTORY_ENTRIES_LIMIT:]
+    except Exception:
+      pass
+
+  def _setup_shell_history(self):
+    if readline is None:
+      self.logger.info("Readline not available; shell-like history disabled.")
+      return
+
+    histfile = os.path.join(os.path.expanduser("~"), ".echo_history")
+
+    try:
+      readline.read_history_file(histfile)
+    except FileNotFoundError:
+      pass
+    except Exception as e:
+      self.logger.warning("Could not read history file %s: %s", histfile, e)
+
+    try:
+      readline.set_history_length(HISTORY_ENTRIES_LIMIT)
+    except Exception as e:
+      self.logger.warning("Could not set history length: %s", e)
+
+    def _save_history():
+      try:
+        readline.write_history_file(histfile)
+      except Exception as e:
+        self.logger.warning("Could not write history file %s: %s", histfile, e)
+
+    atexit.register(_save_history)
+
+  def get_user_history(self):
+    return list(self.history_user)
+
+  def clear_user_history(self):
+    self.history_user = []
+
 
   #
   # System "web-ish" tools

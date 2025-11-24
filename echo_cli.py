@@ -31,6 +31,14 @@ def promptOption(prompt, history, toolkit):
     elif prompt.lower() in ("history", "hh"):
         print(history)
         return "continue"
+    elif prompt.lower() in ("history_user", "hhu"):
+        print(toolkit.get_user_history())
+        return "continue"
+
+    elif prompt.lower() in ("clear_user_history", "chu"):
+        toolkit.clear_user_history()
+        print("User prompt history cleared.")
+        return "continue"
 
     elif prompt.lower() in ("clear", "c"):
         history.clear()
