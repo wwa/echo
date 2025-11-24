@@ -17,6 +17,7 @@ Or use Vision + OCR copy to code from a Twitter post of a screenshot of StackOve
 
 -   Optional:
 
+    -   Speakers (for TTS)
     -   Microphone (for STT)
     -   `WEBSOCKET_LOG_ENABLED=true` for WebSocket log viewer
 
