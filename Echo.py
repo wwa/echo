@@ -210,17 +210,10 @@ if __name__ == "__main__":
     if not toolkit.openai:
         raise Exception('OpenAI API not initialized')
 
-    # Turn audio off for console I/O if you want:
-    if os.getenv("ENABLE_LISTEN", "false").lower() == "false":
-        toolkit.toggleTool('listen', 'disabled')
     if os.getenv("ENABLE_SPEAK", "false").lower() == "false":
         toolkit.toggleTool('speak', 'disabled')
     if os.getenv("ENABLE_CLIPBOARD", "false").lower() == "false":
         toolkit.toggleTool('clipboardRead', 'disabled')
         toolkit.toggleTool('clipboardWrite', 'disabled')
-    if os.getenv("ENABLE_VISUAL_PERCEPTION", "false").lower() == "true":
-        toolkit.toggleTool('ocr', 'disabled')
-        toolkit.toggleTool('vision', 'disabled')
-
 
     mainLoop(toolkit)
