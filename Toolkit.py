@@ -1679,28 +1679,23 @@ class Toolkit(BaseToolkit):
     }
 
 
-
-
-
 ENABLE_LISTEN = os.getenv("ENABLE_LISTEN", "false").lower() == "true"
 ENABLE_SPEAK = os.getenv("ENABLE_SPEAK", "false").lower() == "true"
 ENABLE_VISUAL_PERCEPTION = os.getenv("ENABLE_VISUAL_PERCEPTION", "false").lower() == "true"
 
 if ENABLE_LISTEN or ENABLE_SPEAK:
-  from .ToolkitVoice import BaseToolkitVoice
+    from ToolkitVoice import BaseToolkitVoice
 else:
-  class BaseToolkitVoice(BaseToolkit):
-    def __init__(self):
-      super().__init__()
+    class BaseToolkitVoice(BaseToolkit):
+        def __init__(self):
+            super().__init__()
 
 if ENABLE_VISUAL_PERCEPTION:
-  from .ToolkitVisualPerception import BaseToolkitVisualPerception
+    from ToolkitVisualPerception import BaseToolkitVisualPerception
 else:
-  class BaseToolkitVisualPerception(BaseToolkit):
-    def __init__(self):
-      super().__init__()
-
-
+    class BaseToolkitVisualPerception(BaseToolkit):
+        def __init__(self):
+            super().__init__()
 
 class FullToolkit(Toolkit, BaseToolkitVoice, BaseToolkitVisualPerception):
   def __init__(self):
