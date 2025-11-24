@@ -33,7 +33,6 @@ class BaseToolkitVoice(BaseToolkit):
     args={"text": {"type": "string", "description": "Text to be spoken. Keep short, one sentence."}},
     reqs=["text"],
     prompt="When user says 'say','tell' etc use speak.",
-    state="disabled"
   )
   def speak(self, text):
     self.trace.info("ACTION: Speaking short response via TTS.")
