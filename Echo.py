@@ -11,9 +11,8 @@ from echo_config import (
     init_logging_and_ws,
     MODEL_CONTEXT_LIMITS,
     DEFAULT_CONTEXT_LIMIT,
-    HISTORY_ENTRIES_LIMIT,
 )
-from echo_cli import promptOption, helpText
+from echo_cli import promptOption, shortHelpText
 
 def estimate_tokens_from_messages(messages):
     total_chars = 0
@@ -163,7 +162,17 @@ def mainLoop(toolkit, limit=10):
 
   print("Welcome to ECHO! Deep dive into my power. \n "
         " ------------------ \n"
-        f"{helpText}")
+        f"{shortHelpText}")
+
+  prof_key = getattr(toolkit, "current_model_profile", "current")
+  prof_label = prof_key.capitalize()  # "current" -> "Current", "legacy" -> "Legacy"
+
+  print(f"Active model profile: {prof_label}\n" +
+        f"  chat    : {toolkit.openai_chat_model}\n" +
+        f"  vision  : {toolkit.openai_vision_model}\n" +
+        f"  research: {toolkit.openai_research_model}\n" +
+        f"  stt     : {toolkit.openai_stt_model}")
+
 
   while True:
     try:
@@ -175,21 +184,23 @@ def mainLoop(toolkit, limit=10):
       elif lOps == "continue":
         continue
       elif lOps == "test_vuln":
-        # For TestCmd we already set toolkit.data.prompt to the fixed test string
         print(f"User input (TestCmd): {toolkit.userPrompt()}")
       else:
-        # Normal behavior: use what user actually typed
         print(f"User input: {prompt}")
 
       content, history = modelLoop(toolkit, history)
       history = history[:limit]
       print(content)
-    except Exception as e:
+
+    except KeyboardInterrupt:
+      print("\n^C – interrupted. Goodbye!")
+      break
+
+    except Exception:
       traceback.print_exc()
       pass
 
 if __name__ == "__main__":
-    # All logging + WS setup + CONTEXT_WARN_THRESHOLD comes from config helper
     CONTEXT_WARN_THRESHOLD = init_logging_and_ws()
 
     # ---------------------------------------

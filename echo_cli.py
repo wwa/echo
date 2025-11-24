@@ -2,25 +2,40 @@ import traceback
 
 helpText = (
     "Available commands:\n"
-    "  history                - Show conversation history\n"
-    "  clear                  - Clear conversation history\n"
-    "  reset                  - Reset all toolkit state\n"
-    "  exit                   - Quit ECHO\n\n"
+    "  history                       - Show conversation history\n"
+    "  clear                         - Clear conversation history\n"
+    "  reset                         - Reset all toolkit state\n"
+    "  exit                          - Quit ECHO\n\n"
 
     "LLM / Runtime Controls:\n"
-    "  chain on|off           - Enable or disable history chaining\n"
-    "  log LEVEL              - Change log verbosity (debug/info/warning/error/critical)\n"
-    "  profile NAME           - Switch model profile (e.g. 'profile current')\n\n"
+    "  chain on|off                  - Enable or disable history chaining\n"
+    "  log LEVEL                     - Change log verbosity (debug/info/warning/error/critical)\n"
+    "  profile [NAME]                - Show or switch model profile (e.g. 'profile' or 'profile current')\n\n"
 
     "Toolkit Commands:\n"
-    "  listtools              - List all tools\n"
-    "  listtools disabled     - List only disabled tools\n"
-    "  listtools enabled      - List only enabled tools\n"
-    "  toggletool NAME STATE  - Enable or disable a tool (STATE = enabled|disabled)\n"
-    "  toolinfo NAME          - Show parameters and source code for a tool\n\n"
+    "  listtools                     - List all tools\n"
+    "  listtools disabled/enabled    - List only disabled/enabled tools\n"
+    "  toggletool NAME STATE         - Enable or disable a tool (STATE = enabled|disabled)\n"
+    "  toolinfo NAME                 - Show parameters and source code for a tool\n\n"
 
     "Utility:\n"
-    "  testcmd                - Run vulnerability DB test prompt\n"
+    "  testcmd                       - Run vulnerability DB test prompt\n"
+)
+
+shortHelpText = (
+    "Available commands:\n"
+    "  history                       - Show conversation history\n"
+    "  clear                         - Clear conversation history\n"
+    "  exit                          - Quit ECHO\n\n"
+
+    "LLM / Runtime Controls:\n"
+    "  profile [NAME]                - Show or switch model profile (e.g. 'profile' or 'profile current')\n\n"
+
+    "Toolkit Commands:\n"
+    "  listtools                     - List all tools\n"
+    "  toggletool NAME STATE         - Enable or disable a tool (STATE = enabled|disabled)\n"
+    "  toolinfo NAME                 - Show parameters and source code for a tool\n\n"
+    "For more commands please type help \n\n"
 )
 
 def promptOption(prompt, history, toolkit):
@@ -75,6 +90,19 @@ def promptOption(prompt, history, toolkit):
             print(f"Conversation history chaining is now {'ENABLED' if toolkit.chain_enabled else 'DISABLED'}.")
         else:
             print("Usage: chain on|off")
+        return "continue"
+
+    elif prompt.lower() == "profile":
+        if hasattr(toolkit, "current_model_profile"):
+            prof_key = toolkit.current_model_profile
+            prof_label = prof_key.capitalize()
+            print(f"Active model profile: {prof_label}\n" +
+                  f"  chat    : {toolkit.openai_chat_model}\n" +
+                  f"  vision  : {toolkit.openai_vision_model}\n" +
+                  f"  research: {toolkit.openai_research_model}\n" +
+                  f"  stt     : {toolkit.openai_stt_model}")
+        else:
+            print("Toolkit does not support model profiles.")
         return "continue"
 
     elif prompt.lower().startswith("profile "):
