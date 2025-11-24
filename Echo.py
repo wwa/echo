@@ -203,5 +203,9 @@ if __name__ == "__main__":
     if os.getenv("ENABLE_CLIPBOARD", "false").lower() == "false":
         toolkit.toggleTool('clipboardRead', 'disabled')
         toolkit.toggleTool('clipboardWrite', 'disabled')
+    if os.getenv("ENABLE_VISUAL_PERCEPTION", "false").lower() == "true":
+        toolkit.toggleTool('ocr', 'disabled')
+        toolkit.toggleTool('vision', 'disabled')
+
 
     mainLoop(toolkit)
