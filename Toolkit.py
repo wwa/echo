@@ -23,6 +23,7 @@ import requests
 import base64
 import urllib
 import urllib.parse
+import pyperclip
 
 
 from io import BytesIO

@@ -1,5 +1,4 @@
 import pytesseract
-import pyperclip
 import mss
 import mss.tools
 from PIL import ImageGrab, Image
