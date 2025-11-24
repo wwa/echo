@@ -23,22 +23,23 @@ echo "Detected package manager: $PM"
 
 case "$PM" in
   apt|apt-get)
-    # Debian/Ubuntu and derivatives
     $SUDO $PM update
     $SUDO $PM install -y \
       python3-tk \
       python3-dev \
       xclip \
       wl-clipboard \
-      tesseract-ocr
+      tesseract-ocr \
+      espeak-ng
     ;;
+
   pacman)
-    # Arch/Manjaro
     $SUDO pacman -Syu --needed \
       tk \
       xclip \
       wl-clipboard \
-      tesseract
+      tesseract \
+      espeak-ng
     ;;
 esac
 
