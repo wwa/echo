@@ -38,6 +38,15 @@ shortHelpText = (
     "For more commands please type help \n\n"
 )
 
+def normalize_llm_output(text):
+    return (
+        text.replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\r", "\r")
+            .replace('\\"', '"')
+            .replace("\\'", "'")
+    )
+
 def promptOption(prompt, history, toolkit):
     if prompt.lower() in ("exit", "e"):
         print("Goodbye!")
