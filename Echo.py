@@ -12,7 +12,7 @@ from echo_config import (
     MODEL_CONTEXT_LIMITS,
     DEFAULT_CONTEXT_LIMIT,
 )
-from echo_cli import promptOption, shortHelpText
+from echo_cli import promptOption, shortHelpText, normalize_llm_output
 
 def estimate_tokens_from_messages(messages):
     total_chars = 0
@@ -153,6 +153,9 @@ def modelLoop(toolkit, history=[]):
     reason, content, messages = modelOne(toolkit, messages)
     if reason == "stop":
       break
+
+  if isinstance(content, str):
+      content = normalize_llm_output(content)
 
   history.append(messages)
   return content, history
