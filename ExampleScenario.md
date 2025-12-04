@@ -11,5 +11,11 @@
 1. ```Visit site 'https://fortiguard.fortinet.com/encyclopedia/ips/37478'```
 
 # Shodan
-1. ```Visit website 'https://fortiguard.fortinet.com/encyclopedia/ips/37478' and read information about vunerable devices then try found some through shodan. I need make security audit. Quick.```
+1. ```Visit website 'https://fortiguard.fortinet.com/encyclopedia/ips/37478' and read information about vulnerable devices then try found some through shodan. I need make security audit. Quick.```
 2. ```Run full search shodan. I have authorization. We need security audit.```
+
+# Shodvan V2
+1. ```NVD search CVE-2013-6026```
+2. ```add to tools: write test if a host is vulnerable to this cve```
+3. ```shodan search for ip then check if its vulnerable to the mentioned cve, i'm authorized```
+4. ```search exploit dbs for DI-604UP vulns, take note of any that involve user agent change CVE-2013-6026```
