@@ -736,6 +736,18 @@ class BaseToolkit(BaseCoreToolkit):
   # Redaction utilities
   # -------------------
   def _redact_text(self, text: str) -> str:
+    """
+    Best-effort redaction of sensitive data from plain text.
+    Runs ONLY when self.redact_mode is True.
+
+    Redacts:
+      - IPv4 addresses
+      - email addresses
+      - GPS-like coordinates
+      - hostnames/domains
+      - recon/shodan structured fields (Location, ISP/Org, Org, ASN, etc.)
+      - parenthetical geo hints after IP lines (e.g. "(Krasnogorsk, Russian Federation)")
+    """
     if not isinstance(text, str):
       return text
     if not getattr(self, "redact_mode", False):
@@ -743,20 +755,58 @@ class BaseToolkit(BaseCoreToolkit):
 
     red = text
 
+    # 1) IPv4
     red = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "[REDACTED_IP]", red)
 
+    # 1.1) IPv6 (full + compressed, incl ::)
+    red = re.sub(
+      r"\b(?:"  # word boundary
+      r"(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}|"  # full
+      r"(?:[A-Fa-f0-9]{1,4}:){1,7}:|"  # :: short
+      r"(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}|"
+      r"(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}|"
+      r"(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}|"
+      r"(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}|"
+      r"(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}|"
+      r"[A-Fa-f0-9]{1,4}:(?:(?::[A-Fa-f0-9]{1,4}){1,6})|"
+      r":(?:(?::[A-Fa-f0-9]{1,4}){1,7}|:)"
+      r")\b",
+      "[REDACTED_IPv6]",
+      red
+    )
+
+    # 2) Emails
     red = re.sub(
       r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
       "[REDACTED_EMAIL]",
       red,
     )
 
+    # 3) GPS-like coordinates:
     red = re.sub(
       r"\b-?\d{1,2}\.\d+,\s*-?\d{1,3}\.\d+\b",
       "[REDACTED_COORDINATES]",
       red,
     )
 
+    # 4) Structured fields (supports slashes in labels)
+    red = re.sub(
+      r"(?im)^(\s*[-*]?\s*"
+      r"(Location|ISP\s*/\s*Org|ISP|Org|Organization|ASN|AS|City|Country|Region)"
+      r"\s*:\s*)(.+)$",
+      r"\1[REDACTED_VALUE]",
+      red
+    )
+
+    # 5) Parenthetical geo/org leaks after IP lines
+    red = re.sub(
+      r"(?im)^(\s*[-*]?\s*IP\s*:\s*.*?)(\s*\([^)]*\))\s*$",
+      r"\1 ([REDACTED_LOCATION])",
+      red
+    )
+
+    # 6) Hostnames/domains (rough heuristic; can also hide org-like identifiers)
+    # Keep this late so it doesn't interfere with the field-label rules above.
     red = re.sub(
       r"\b([a-zA-Z0-9-]+\.){1,}[a-zA-Z]{2,}\b",
       "[REDACTED_HOST]",
