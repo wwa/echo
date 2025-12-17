@@ -44,9 +44,6 @@ import pyxploitdb
 #Tool import tools
 from echo_config import HISTORY_ENTRIES_LIMIT
 
-
-
-
 class AttrDict(dict):
   def __init__(self, *args, **kwargs):
     super(AttrDict, self).__init__(*args, **kwargs)
@@ -110,6 +107,9 @@ class BaseCoreToolkit:
     self.logger = logging.getLogger(f"echo.toolkit.{self.__class__.__name__}")
     self.trace = logging.getLogger("echo.trace")
     self.echo_toolkit = logging.getLogger("echo.toolkit")
+    self.redact_mode = os.getenv("REDACT_MODE", "off").lower() in (
+      "1", "true", "yes", "y", "on"
+    )
 
     # Load .env
     load_dotenv()
@@ -153,6 +153,16 @@ class BaseCoreToolkit:
 
     # Select starting profile
     self.current_model_profile = os.getenv("OPENAI_MODEL_PROFILE", "current").lower()
+
+    # REDACT_MAP
+    raw_redact_map = os.getenv("REDACT_MAP", "").strip()
+    try:
+      self.redact_map = json.loads(raw_redact_map) if raw_redact_map else {}
+      if not isinstance(self.redact_map, dict):
+        self.redact_map = {}
+    except Exception:
+      self.logger.exception("Failed to parse REDACT_MAP from env; using empty map.")
+      self.redact_map = {}
 
     # OpenAI client
     client_kwargs = {}
@@ -516,6 +526,24 @@ class BaseCoreToolkit:
 
     return input_items
 
+  def _expand_redacted_placeholders(self, text: str) -> str:
+    if not isinstance(text, str):
+      return text
+    if not getattr(self, "redact_mode", False):
+      return text
+    if not getattr(self, "redact_map", None):
+      return text
+
+    out = text
+    for placeholder, real_value in self.redact_map.items():
+      try:
+        if isinstance(real_value, (dict, list)):
+          real_value = json.dumps(real_value)
+        out = out.replace(str(placeholder), str(real_value))
+      except Exception:
+        continue
+    return out
+
   @toolspec(
     desc="Set or update API keys for external services (OpenAI, Shodan, SerpAPI).",
     args={
@@ -730,6 +758,52 @@ class BaseToolkit(BaseCoreToolkit):
     self._setup_shell_history()
     self.history_user = []
 
+  # -------------------
+  # Redaction utilities
+  # -------------------
+  def _redact_text(self, text: str) -> str:
+    if not isinstance(text, str):
+      return text
+    if not getattr(self, "redact_mode", False):
+      return text
+
+    red = text
+
+    red = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "[REDACTED_IP]", red)
+
+    red = re.sub(
+      r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+      "[REDACTED_EMAIL]",
+      red,
+    )
+
+    red = re.sub(
+      r"\b-?\d{1,2}\.\d+,\s*-?\d{1,3}\.\d+\b",
+      "[REDACTED_COORDINATES]",
+      red,
+    )
+
+    red = re.sub(
+      r"\b([a-zA-Z0-9-]+\.){1,}[a-zA-Z]{2,}\b",
+      "[REDACTED_HOST]",
+      red,
+    )
+
+    return red
+
+  @toolspec(
+    desc="Redact sensitive data (IP addresses, emails, coordinates, hostnames/organisations) from the given text.",
+    args={
+      "text": {
+        "type": "string",
+        "description": "Plain text to redact."
+      }
+    },
+    reqs=["text"]
+  )
+  def redactSensitive(self, text):
+    return self._redact_text(text)
+
   @toolspec(
     desc=(
             "Read a line of text from the console. "
@@ -762,8 +836,15 @@ class BaseToolkit(BaseCoreToolkit):
       text = self.read(prompt)
       self.trace.info("ACTION: Received your text input from console.")
 
-    self.data.prompt = text
+    self.data.prompt_raw = text
+
+    # Apply redacted placeholder expansion (only if redacted mode is ON)
+    effective = self._expand_redacted_placeholders(text)
+
+    self.data.prompt = effective
     self.add_user_history(text)
+
+    # Reset snapshot data
     self.data.screenshot = None
     self.data.clipboard = None
 
@@ -1012,6 +1093,51 @@ class BaseToolkit(BaseCoreToolkit):
       "chain_enabled": self.chain_enabled
     }
 
+  @toolspec(
+    desc="Enable or disable redacted mode. When enabled, placeholders from the redaction map are expanded for input and outputs are post-redacted.",
+    args={
+      "enabled": {
+        "type": "string",
+        "description": "Set to 'true'/'on' to enable, 'false'/'off' to disable."
+      }
+    },
+    reqs=["enabled"]
+  )
+  def setRedactMode(self, enabled):
+    val = (enabled or "").strip().lower()
+    on = val in ("true", "1", "yes", "y", "on")
+    self.redact_mode = on
+    return {
+      "status": "success",
+      "redact_mode": self.redact_mode
+    }
+
+  @toolspec(
+    desc="Replace the JSON redaction map. Keys are placeholders (as typed by the user), values are real sensitive tokens.",
+    args={
+      "mapping_json": {
+        "type": "string",
+        "description": "JSON object, e.g. {\"redactedIP\": \"127.0.0.1\"}."
+      }
+    },
+    reqs=["mapping_json"]
+  )
+  def setRedactMap(self, mapping_json):
+    try:
+      m = json.loads(mapping_json)
+      if not isinstance(m, dict):
+        raise ValueError("mapping_json must be a JSON object")
+    except Exception as e:
+      return {
+        "status": "error",
+        "error": f"Invalid mapping_json: {e}"
+      }
+
+    self.redact_map = m
+    return {
+      "status": "success",
+      "size": len(self.redact_map)
+    }
 
 #
 # Extra toolkit (Shodan, research, arxiv, exploit-db, NVD, etc.)
