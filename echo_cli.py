@@ -11,6 +11,7 @@ helpText = (
     "  chain on|off                  - Enable or disable history chaining\n"
     "  log LEVEL                     - Change log verbosity (debug/info/warning/error/critical)\n"
     "  profile [NAME]                - Show or switch model profile (e.g. 'profile' or 'profile current')\n\n"
+    "  redact on|off                 - Enable or disable input & output data redaction\n\n"
 
     "Toolkit Commands:\n"
     "  listtools                     - List all tools\n"
@@ -99,6 +100,16 @@ def promptOption(prompt, history, toolkit):
             print(f"Conversation history chaining is now {'ENABLED' if toolkit.chain_enabled else 'DISABLED'}.")
         else:
             print("Usage: chain on|off")
+        return "continue"
+
+    elif prompt.lower().startswith("redact "):
+        parts = prompt.split()
+        if len(parts) >= 2 and parts[1].lower() in ("on", "off"):
+            toolkit.redact_mode = (parts[1].lower() == "on")
+            state = "ENABLED" if toolkit.redact_mode else "DISABLED"
+            print(f"Redacted mode is now {state}.")
+        else:
+            print("Usage: redact on|off")
         return "continue"
 
     elif prompt.lower() == "profile":

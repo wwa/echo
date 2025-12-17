@@ -157,6 +157,12 @@ def modelLoop(toolkit, history=[]):
   if isinstance(content, str):
       content = normalize_llm_output(content)
 
+      if getattr(toolkit, "redact_mode", False):
+        try:
+          content = toolkit._redact_text(content)
+        except Exception:
+          logging.getLogger("echo").exception("Failed to redact output text")
+
   history.append(messages)
   return content, history
 
