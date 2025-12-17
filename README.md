@@ -1,6 +1,12 @@
 # ECHO
 ECHO is a modular GPT (4 or newer) based assistant capable of reflection, research and vision.
 
+## Demo
+
+![Echo in Action Demo](assets/demo.gif)
+
+## Intro
+
 ECHO stands for Enhanced Computational Heuristic Oracle (don't judge me, it named itself).
 
 It's capable of executing python functions from a toolkit that it has direct control over.
