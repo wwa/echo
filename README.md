@@ -92,7 +92,7 @@ LLM Tech stack:
    - `TTS` gpt-4o-mini-transcribe
    - `Chat` GPT-5-mini
    - `vision` GPT-5 + Tesseract 
-   - `research`GPT-5.1
+   - `research`GPT-5.2
 
 -  `STT`
     - I prefer ElevenLabs quality, but I daily drive local for lower latency.
