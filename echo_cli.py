@@ -1,8 +1,12 @@
 import traceback
+import json
+import os
+from datetime import datetime
 
 helpText = (
     "Available commands:\n"
     "  history                       - Show conversation history\n"
+    "  export [FILENAME]             - Export history to JSON file (default: history_export.json)\n"
     "  clear                         - Clear conversation history\n"
     "  reset                         - Reset all toolkit state\n"
     "  exit                          - Quit ECHO\n\n"
@@ -26,6 +30,7 @@ helpText = (
 shortHelpText = (
     "Available commands:\n"
     "  history                       - Show conversation history\n"
+    "  export [FILENAME]             - Export history to JSON file\n"
     "  clear                         - Clear conversation history\n"
     "  exit                          - Quit ECHO\n\n"
 
@@ -58,6 +63,30 @@ def promptOption(prompt, history, toolkit):
         return "continue"
     elif prompt.lower() in ("history_user", "hhu"):
         print(toolkit.get_user_history())
+        return "continue"
+
+    elif prompt.lower().startswith("export"):
+        parts = prompt.split(maxsplit=1)
+        filename = parts[1].strip() if len(parts) > 1 else "history_export.json"
+
+        # Ensure .json extension
+        if not filename.endswith('.json'):
+            filename += '.json'
+
+        try:
+            export_data = {
+                "exported_at": datetime.now().isoformat(),
+                "history": history
+            }
+
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+
+            print(f"History exported to: {os.path.abspath(filename)}")
+        except Exception as e:
+            print(f"Failed to export history: {e}")
+            traceback.print_exc()
+
         return "continue"
 
     elif prompt.lower() in ("clear_user_history", "chu"):
