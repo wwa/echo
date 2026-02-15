@@ -6,7 +6,7 @@ from datetime import datetime
 helpText = (
     "Available commands:\n"
     "  history                       - Show conversation history\n"
-    "  export [FILENAME]             - Export history to JSON file (default: history_export.json)\n"
+    "  export [FILENAME]             - Export command history to file (default: echo_history.txt)\n"
     "  clear                         - Clear conversation history\n"
     "  reset                         - Reset all toolkit state\n"
     "  exit                          - Quit ECHO\n\n"
@@ -30,7 +30,7 @@ helpText = (
 shortHelpText = (
     "Available commands:\n"
     "  history                       - Show conversation history\n"
-    "  export [FILENAME]             - Export history to JSON file\n"
+    "  export [FILENAME]             - Export command history to file\n"
     "  clear                         - Clear conversation history\n"
     "  exit                          - Quit ECHO\n\n"
 
@@ -67,22 +67,20 @@ def promptOption(prompt, history, toolkit):
 
     elif prompt.lower().startswith("export"):
         parts = prompt.split(maxsplit=1)
-        filename = parts[1].strip() if len(parts) > 1 else "history_export.json"
+        filename = parts[1].strip() if len(parts) > 1 else "echo_history.txt"
 
-        # Ensure .json extension
-        if not filename.endswith('.json'):
-            filename += '.json'
+        # Get readline history file path
+        histfile = os.path.join(os.path.expanduser("~"), ".echo_history")
 
         try:
-            export_data = {
-                "exported_at": datetime.now().isoformat(),
-                "history": history
-            }
-
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(export_data, f, indent=2, ensure_ascii=False)
-
-            print(f"History exported to: {os.path.abspath(filename)}")
+            if os.path.exists(histfile):
+                # Copy history file to current directory
+                import shutil
+                dest_path = os.path.join(os.getcwd(), filename)
+                shutil.copy2(histfile, dest_path)
+                print(f"Command history exported to: {dest_path}")
+            else:
+                print(f"No history file found at: {histfile}")
         except Exception as e:
             print(f"Failed to export history: {e}")
             traceback.print_exc()
