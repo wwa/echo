@@ -437,8 +437,8 @@ class BaseCoreToolkit:
   #
   def _get_client_for_model(self, model_name):
     """
-    Get the appropriate OpenAI client for the given model.
-    Uses the multi-provider configuration if available, falls back to default client.
+    Get the appropriate client for the given model.
+    Creates provider-specific clients (OpenAI, Anthropic, Google).
 
     Returns: (client, provider_info)
     """
@@ -454,24 +454,47 @@ class BaseCoreToolkit:
 
         # Create a new client for this provider
         provider_config = self.llm_providers[provider_name]
-        client_kwargs = {}
-
         api_key = provider_config.get("apiKey")
         endpoint = provider_config.get("endpoint")
 
-        if api_key:
-          client_kwargs["api_key"] = api_key
-        if endpoint:
-          client_kwargs["base_url"] = endpoint
+        try:
+          client = None
 
-        if client_kwargs:
-          try:
-            client = OpenAI(**client_kwargs)
+          # Create provider-specific client
+          if provider_name == "anthropic":
+            from anthropic import Anthropic
+            client_kwargs = {}
+            if api_key:
+              client_kwargs["api_key"] = api_key
+            if endpoint:
+              client_kwargs["base_url"] = endpoint
+            client = Anthropic(**client_kwargs) if client_kwargs else None
+
+          elif provider_name == "google":
+            import google.generativeai as genai
+            if api_key:
+              genai.configure(api_key=api_key)
+              client = genai  # Store the module itself as client
+
+          else:
+            # Default: OpenAI-compatible API
+            client_kwargs = {}
+            if api_key:
+              client_kwargs["api_key"] = api_key
+            if endpoint:
+              client_kwargs["base_url"] = endpoint
+            if client_kwargs:
+              client = OpenAI(**client_kwargs)
+
+          if client:
             self.provider_clients[provider_name] = client
             self.logger.info(f"Created new client for provider: {provider_name}")
             return client, provider_config
-          except Exception as e:
-            self.logger.error(f"Failed to create client for provider {provider_name}: {e}")
+          else:
+            self.logger.warning(f"No API key configured for provider: {provider_name}")
+
+        except Exception as e:
+          self.logger.error(f"Failed to create client for provider {provider_name}: {e}")
 
     # Fall back to default OpenAI client
     return self.openai, {"providerName": "default", "name": "Default OpenAI"}
@@ -766,13 +789,82 @@ class BaseCoreToolkit:
       "stt_provider": get_provider_info(self.openai_stt_model),
     }
 
+  def _convert_to_anthropic_messages(self, messages):
+    """Convert OpenAI format messages to Anthropic format."""
+    # Anthropic doesn't support 'system' in messages array, extract it
+    system_content = None
+    anthropic_messages = []
+
+    for msg in messages:
+      if not isinstance(msg, dict):
+        continue
+
+      role = msg.get("role")
+      content = msg.get("content", "")
+
+      # Extract system message
+      if role == "system":
+        system_content = content
+        continue
+
+      # Skip tool messages for now (Anthropic handles tools differently)
+      if role == "tool":
+        continue
+
+      # Skip assistant messages with only tool_calls
+      if role == "assistant" and msg.get("tool_calls") and not content:
+        continue
+
+      anthropic_messages.append({
+        "role": role,
+        "content": content
+      })
+
+    return system_content, anthropic_messages
+
+  def _convert_to_gemini_messages(self, messages):
+    """Convert OpenAI format messages to Gemini format."""
+    # Gemini uses a different structure with 'parts'
+    gemini_messages = []
+    system_instruction = None
+
+    for msg in messages:
+      if not isinstance(msg, dict):
+        continue
+
+      role = msg.get("role")
+      content = msg.get("content", "")
+
+      # Extract system message as system_instruction
+      if role == "system":
+        system_instruction = content
+        continue
+
+      # Skip tool messages for now
+      if role == "tool":
+        continue
+
+      # Map roles: assistant -> model, user -> user
+      gemini_role = "model" if role == "assistant" else "user"
+
+      # Skip assistant messages with only tool_calls
+      if role == "assistant" and msg.get("tool_calls") and not content:
+        continue
+
+      gemini_messages.append({
+        "role": gemini_role,
+        "parts": [{"text": content}]
+      })
+
+    return system_instruction, gemini_messages
+
   def llm_call(self, messages, tools=None, tool_choice="auto", **kwargs):
     """
-    Unified LLM call.
+    Unified LLM call supporting multiple providers (OpenAI, Anthropic, Google).
 
     Returns:
       {
-        "backend": "completions" | "responses",
+        "backend": "completions" | "responses" | "anthropic" | "gemini",
         "raw": <raw SDK response>,
         "finish_reason": "stop" | "tool_calls" | <other> | None,
         "message": <primary assistant message-like object>,
@@ -785,6 +877,7 @@ class BaseCoreToolkit:
     if not client:
       raise RuntimeError(f"No client available for model: {self.openai_chat_model}")
 
+    provider_name = provider_info.get("providerName", "default")
     self.logger.info(f"Using provider '{provider_info.get('name', 'Unknown')}' for model: {self.openai_chat_model}")
 
     backend = getattr(self, "llm_backend", "completions").lower()
@@ -795,8 +888,61 @@ class BaseCoreToolkit:
         tools = kwargs["tools"]
       kwargs.pop("tools")
 
-    # ---------------- CHAT COMPLETIONS ----------------
-    if backend == "completions":
+    # ---------------- ANTHROPIC (CLAUDE) ----------------
+    if provider_name == "anthropic":
+      system_content, anthropic_messages = self._convert_to_anthropic_messages(messages)
+
+      call_kwargs = {"model": self.openai_chat_model, "messages": anthropic_messages, "max_tokens": kwargs.get("max_tokens", 4096)}
+      if system_content:
+        call_kwargs["system"] = system_content
+
+      res = client.messages.create(**call_kwargs)
+
+      # Convert response to unified format
+      content = ""
+      for block in res.content:
+        if hasattr(block, "text"):
+          content += block.text
+
+      from types import SimpleNamespace
+      message_like = SimpleNamespace(role="assistant", content=content)
+
+      return {
+        "backend": "anthropic",
+        "raw": res,
+        "finish_reason": res.stop_reason or "stop",
+        "message": message_like,
+        "provider": provider_info,
+      }
+
+    # ---------------- GOOGLE (GEMINI) ----------------
+    elif provider_name == "google":
+      system_instruction, gemini_messages = self._convert_to_gemini_messages(messages)
+
+      model = client.GenerativeModel(self.openai_chat_model, system_instruction=system_instruction)
+
+      # Convert to single conversation
+      if gemini_messages:
+        # Start chat with history
+        chat = model.start_chat(history=gemini_messages[:-1] if len(gemini_messages) > 1 else [])
+        last_message = gemini_messages[-1] if gemini_messages else {"parts": [{"text": ""}]}
+        res = chat.send_message(last_message["parts"][0]["text"])
+      else:
+        res = model.generate_content("")
+
+      from types import SimpleNamespace
+      message_like = SimpleNamespace(role="assistant", content=res.text if hasattr(res, "text") else "")
+
+      return {
+        "backend": "gemini",
+        "raw": res,
+        "finish_reason": "stop",
+        "message": message_like,
+        "provider": provider_info,
+      }
+
+    # ---------------- OPENAI CHAT COMPLETIONS ----------------
+    elif backend == "completions":
       res = client.chat.completions.create(
         model=self.openai_chat_model,
         messages=messages,
@@ -813,8 +959,8 @@ class BaseCoreToolkit:
         "provider": provider_info,
       }
 
-    # ---------------- RESPONSES ----------------
-    if backend == "responses":
+    # ---------------- OPENAI RESPONSES ----------------
+    elif backend == "responses":
         kwargs.pop("tool_choice", None)
 
         input_items = self._messages_to_responses_input(messages)
@@ -866,7 +1012,7 @@ class BaseCoreToolkit:
             "provider": provider_info,
         }
 
-    raise ValueError(f"Unknown llm_backend: {backend!r}")
+    raise ValueError(f"Unknown provider or backend: {provider_name} / {backend}")
 
 #
 # BaseToolkit (system toolkit: decorator mgmt + IO + console + clipboard, etc.)
