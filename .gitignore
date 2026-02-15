@@ -61,3 +61,8 @@ fabric.properties
 
 # CUSTOM
 .env
+/.idea/.gitignore
+/.idea/echo-v1.iml
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/inspectionProfiles/profiles_settings.xml
