@@ -15,7 +15,7 @@ Or use Vision + OCR copy to code from a Twitter post of a screenshot of StackOve
 
 ## Requirements
 
--   Python 3.13.7+
+- Python 3.14.2+ (Higher versions may require requirements adjustment)
 
 -   `.env` file with:
 
