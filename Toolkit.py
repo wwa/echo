@@ -118,7 +118,15 @@ class BaseCoreToolkit:
     self.shodan_api_key = os.getenv("SHODAN_API_KEY", "Missing Key")
     self.nvd_api_key = os.getenv("NVD_API_KEY")
 
-    # --- OpenAI config from .env ---
+    # --- Load LLM Providers and Model Mapping ---
+    from echo_config import parse_llm_providers, parse_model_provider_map
+    self.llm_providers = parse_llm_providers()
+    self.model_provider_map = parse_model_provider_map()
+
+    # Cache for provider-specific OpenAI clients
+    self.provider_clients = {}
+
+    # --- OpenAI config from .env (backward compatibility) ---
     self.openai_api_key = os.getenv("OPENAI_API_KEY")
     self.openai_base_url = os.getenv("OPENAI_BASE_URL")
     self.llm_backend = os.getenv("OPENAI_LLM_BACKEND", "completions").lower()
@@ -164,7 +172,7 @@ class BaseCoreToolkit:
       self.logger.exception("Failed to parse REDACT_MAP from env; using empty map.")
       self.redact_map = {}
 
-    # OpenAI client
+    # OpenAI client (backward compatibility - default client)
     client_kwargs = {}
     if self.openai_api_key:
       client_kwargs["api_key"] = self.openai_api_key
@@ -426,6 +434,47 @@ class BaseCoreToolkit:
   #
   # --- API keys & profiles (core) ---
   #
+  def _get_client_for_model(self, model_name):
+    """
+    Get the appropriate OpenAI client for the given model.
+    Uses the multi-provider configuration if available, falls back to default client.
+
+    Returns: (client, provider_info)
+    """
+    # Check if model is in the mapping
+    if model_name in self.model_provider_map:
+      mapping = self.model_provider_map[model_name]
+      provider_name = mapping.get("providerName")
+
+      if provider_name and provider_name in self.llm_providers:
+        # Check if we already have a cached client for this provider
+        if provider_name in self.provider_clients:
+          return self.provider_clients[provider_name], self.llm_providers[provider_name]
+
+        # Create a new client for this provider
+        provider_config = self.llm_providers[provider_name]
+        client_kwargs = {}
+
+        api_key = provider_config.get("apiKey")
+        endpoint = provider_config.get("endpoint")
+
+        if api_key:
+          client_kwargs["api_key"] = api_key
+        if endpoint:
+          client_kwargs["base_url"] = endpoint
+
+        if client_kwargs:
+          try:
+            client = OpenAI(**client_kwargs)
+            self.provider_clients[provider_name] = client
+            self.logger.info(f"Created new client for provider: {provider_name}")
+            return client, provider_config
+          except Exception as e:
+            self.logger.error(f"Failed to create client for provider {provider_name}: {e}")
+
+    # Fall back to default OpenAI client
+    return self.openai, {"providerName": "default", "name": "Default OpenAI"}
+
   def _update_env_var(self, key, value):
     os.environ[key] = value
     env_path = os.path.join(os.getcwd(), ".env")
@@ -622,6 +671,67 @@ class BaseCoreToolkit:
     return True
 
   @toolspec(
+    desc="Show current model profile and provider information for all models (chat, vision, research, STT).",
+    args={},
+    reqs=[]
+  )
+  def showModelProfile(self):
+    # Get provider info for each model
+    def get_provider_info(model_name):
+      if model_name in self.model_provider_map:
+        mapping = self.model_provider_map[model_name]
+        provider_name = mapping.get("providerName", "unknown")
+        model_id = mapping.get("modelIdentifier", model_name)
+        if provider_name in self.llm_providers:
+          provider_config = self.llm_providers[provider_name]
+          provider_display = provider_config.get("name", provider_name)
+          endpoint = provider_config.get("endpoint", "N/A")
+          return {
+            "provider": provider_display,
+            "providerName": provider_name,
+            "modelIdentifier": model_id,
+            "endpoint": endpoint
+          }
+        return {
+          "provider": provider_name,
+          "providerName": provider_name,
+          "modelIdentifier": model_id,
+          "endpoint": "N/A"
+        }
+      return {
+        "provider": "default",
+        "providerName": "default",
+        "modelIdentifier": model_name,
+        "endpoint": "legacy configuration"
+      }
+
+    return {
+      "current_profile": self.current_model_profile,
+      "available_profiles": list(self.model_profiles.keys()),
+      "backend": self.llm_backend,
+      "models": {
+        "chat": {
+          "model": self.openai_chat_model,
+          **get_provider_info(self.openai_chat_model)
+        },
+        "vision": {
+          "model": self.openai_vision_model,
+          **get_provider_info(self.openai_vision_model)
+        },
+        "research": {
+          "model": self.openai_research_model,
+          **get_provider_info(self.openai_research_model)
+        },
+        "stt": {
+          "model": self.openai_stt_model,
+          **get_provider_info(self.openai_stt_model)
+        }
+      },
+      "total_providers": len(self.llm_providers),
+      "total_model_mappings": len(self.model_provider_map)
+    }
+
+  @toolspec(
     desc="Switch between predefined LLM model profiles (e.g. 'legacy', 'current'). "
          "Each profile sets chat/vision/research/STT models as a bundle.",
     args={
@@ -639,13 +749,30 @@ class BaseCoreToolkit:
         "status": "error",
         "error": f"Unknown profile '{profile}'. Available: {list(self.model_profiles.keys())}"
       }
+
+    # Get provider info for each model
+    def get_provider_info(model_name):
+      if model_name in self.model_provider_map:
+        mapping = self.model_provider_map[model_name]
+        provider_name = mapping.get("providerName", "unknown")
+        model_id = mapping.get("modelIdentifier", model_name)
+        if provider_name in self.llm_providers:
+          provider_display = self.llm_providers[provider_name].get("name", provider_name)
+          return f"{provider_display} ({model_id})"
+        return f"{provider_name} ({model_id})"
+      return "default (legacy)"
+
     return {
       "status": "success",
       "profile": self.current_model_profile,
       "chat_model": self.openai_chat_model,
+      "chat_provider": get_provider_info(self.openai_chat_model),
       "vision_model": self.openai_vision_model,
+      "vision_provider": get_provider_info(self.openai_vision_model),
       "research_model": self.openai_research_model,
+      "research_provider": get_provider_info(self.openai_research_model),
       "stt_model": self.openai_stt_model,
+      "stt_provider": get_provider_info(self.openai_stt_model),
     }
 
   def llm_call(self, messages, tools=None, tool_choice="auto", **kwargs):
@@ -658,10 +785,16 @@ class BaseCoreToolkit:
         "raw": <raw SDK response>,
         "finish_reason": "stop" | "tool_calls" | <other> | None,
         "message": <primary assistant message-like object>,
+        "provider": <provider info dict>,
       }
     """
-    if not getattr(self, "openai", None):
-      raise RuntimeError("OpenAI client not initialized")
+    # Get the appropriate client for the current model
+    client, provider_info = self._get_client_for_model(self.openai_chat_model)
+
+    if not client:
+      raise RuntimeError(f"No client available for model: {self.openai_chat_model}")
+
+    self.logger.info(f"Using provider '{provider_info.get('name', 'Unknown')}' for model: {self.openai_chat_model}")
 
     backend = getattr(self, "llm_backend", "completions").lower()
     tools = tools if tools is not None else self.toolMessage()
@@ -673,7 +806,7 @@ class BaseCoreToolkit:
 
     # ---------------- CHAT COMPLETIONS ----------------
     if backend == "completions":
-      res = self.openai.chat.completions.create(
+      res = client.chat.completions.create(
         model=self.openai_chat_model,
         messages=messages,
         tools=tools,
@@ -686,6 +819,7 @@ class BaseCoreToolkit:
         "raw": res,
         "finish_reason": choice.finish_reason,
         "message": choice.message,
+        "provider": provider_info,
       }
 
     # ---------------- RESPONSES ----------------
@@ -695,7 +829,7 @@ class BaseCoreToolkit:
         input_items = self._messages_to_responses_input(messages)
         tools_for_responses = self._tools_for_responses(tools)
 
-        res = self.openai.responses.create(
+        res = client.responses.create(
             model=self.openai_chat_model,
             input=input_items,
             tools=tools_for_responses,
@@ -738,6 +872,7 @@ class BaseCoreToolkit:
             "raw": res,
             "finish_reason": finish_reason,
             "message": message_like,
+            "provider": provider_info,
         }
 
     raise ValueError(f"Unknown llm_backend: {backend!r}")

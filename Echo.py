@@ -176,11 +176,21 @@ def mainLoop(toolkit, limit=10):
   prof_key = getattr(toolkit, "current_model_profile", "current")
   prof_label = prof_key.capitalize()  # "current" -> "Current", "legacy" -> "Legacy"
 
-  print(f"Active model profile: {prof_label}\n" +
-        f"  chat    : {toolkit.openai_chat_model}\n" +
-        f"  vision  : {toolkit.openai_vision_model}\n" +
-        f"  research: {toolkit.openai_research_model}\n" +
-        f"  stt     : {toolkit.openai_stt_model}")
+  # Helper function to get provider display name
+  def get_provider_display(model_name):
+    if model_name in toolkit.model_provider_map:
+      provider_name = toolkit.model_provider_map[model_name].get("providerName", "")
+      if provider_name in toolkit.llm_providers:
+        return toolkit.llm_providers[provider_name].get("name", provider_name)
+      return provider_name
+    return "default"
+
+  print(f"Active model profile: {prof_label}")
+  print(f"  chat    : {toolkit.openai_chat_model} [{get_provider_display(toolkit.openai_chat_model)}]")
+  print(f"  vision  : {toolkit.openai_vision_model} [{get_provider_display(toolkit.openai_vision_model)}]")
+  print(f"  research: {toolkit.openai_research_model} [{get_provider_display(toolkit.openai_research_model)}]")
+  print(f"  stt     : {toolkit.openai_stt_model} [{get_provider_display(toolkit.openai_stt_model)}]")
+  print(f"Backend: {toolkit.llm_backend} | Providers loaded: {len(toolkit.llm_providers)}")
 
 
   while True:

@@ -1,5 +1,6 @@
 # echo_config.py
 import os
+import json
 import logging
 
 from ws_logging import setup_ws_log_streaming  # assumes you already have ws_logging.py
@@ -20,6 +21,68 @@ MODEL_CONTEXT_LIMITS = {
 }
 
 HISTORY_ENTRIES_LIMIT = int(os.getenv("HISTORY_ENTRIES_LIMIT", "50"))
+
+def parse_llm_providers():
+    """
+    Parse LLM_PROVIDERS from .env file.
+    Returns a dict mapping providerName -> provider config
+    """
+    raw_providers = os.getenv("LLM_PROVIDERS", "[]").strip()
+    try:
+        providers_list = json.loads(raw_providers) if raw_providers else []
+        if not isinstance(providers_list, list):
+            print("⚠️  LLM_PROVIDERS must be a JSON array, using empty list.")
+            return {}
+
+        providers_map = {}
+        for provider in providers_list:
+            if not isinstance(provider, dict):
+                continue
+            provider_name = provider.get("providerName")
+            if provider_name:
+                providers_map[provider_name] = provider
+
+        return providers_map
+    except json.JSONDecodeError as e:
+        print(f"⚠️  Failed to parse LLM_PROVIDERS JSON: {e}. Using empty list.")
+        return {}
+    except Exception as e:
+        print(f"⚠️  Error parsing LLM_PROVIDERS: {e}. Using empty list.")
+        return {}
+
+def parse_model_provider_map():
+    """
+    Parse MODEL_PROVIDER_MAP from .env file.
+    Returns a dict mapping modelName -> {providerName, modelIdentifier}
+
+    The modelIdentifier is a unique alias that can be used to reference the same
+    model from different providers (e.g., "openai-gpt5" vs "deepseek-gpt5").
+    """
+    raw_map = os.getenv("MODEL_PROVIDER_MAP", "[]").strip()
+    try:
+        map_list = json.loads(raw_map) if raw_map else []
+        if not isinstance(map_list, list):
+            print("⚠️  MODEL_PROVIDER_MAP must be a JSON array, using empty dict.")
+            return {}
+
+        model_map = {}
+        for entry in map_list:
+            if not isinstance(entry, dict):
+                continue
+            model_name = entry.get("modelName")
+            if model_name:
+                model_map[model_name] = {
+                    "providerName": entry.get("providerName"),
+                    "modelIdentifier": entry.get("modelIdentifier", model_name),
+                }
+
+        return model_map
+    except json.JSONDecodeError as e:
+        print(f"⚠️  Failed to parse MODEL_PROVIDER_MAP JSON: {e}. Using empty dict.")
+        return {}
+    except Exception as e:
+        print(f"⚠️  Error parsing MODEL_PROVIDER_MAP: {e}. Using empty dict.")
+        return {}
 
 def init_logging_and_ws():
     """
