@@ -126,16 +126,21 @@ class BaseCoreToolkit:
     # Cache for provider-specific OpenAI clients
     self.provider_clients = {}
 
-    # --- OpenAI config from .env (backward compatibility) ---
+    # --- Legacy OpenAI config from .env (backward compatibility) ---
     self.openai_api_key = os.getenv("OPENAI_API_KEY")
     self.openai_base_url = os.getenv("OPENAI_BASE_URL")
-    self.llm_backend = os.getenv("OPENAI_LLM_BACKEND", "completions").lower()
+
+    # --- LLM Backend configuration ---
+    # Try new variable name first, then fall back to legacy OPENAI_LLM_BACKEND
+    self.llm_backend = os.getenv("LLM_BACKEND",
+                                  os.getenv("OPENAI_LLM_BACKEND", "completions")).lower()
 
     # --- Base model values (used for 'current' profile by default) ---
-    default_chat = os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
-    default_vision = os.getenv("OPENAI_VISION_MODEL", "gpt-5.0")
-    default_research = os.getenv("OPENAI_RESEARCH_MODEL", "gpt-5.1")
-    default_stt = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
+    # Try new variable names first, then fall back to legacy OPENAI_ prefixed names
+    default_chat = os.getenv("CHAT_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini"))
+    default_vision = os.getenv("VISION_MODEL", os.getenv("OPENAI_VISION_MODEL", "gpt-5.0"))
+    default_research = os.getenv("RESEARCH_MODEL", os.getenv("OPENAI_RESEARCH_MODEL", "gpt-5.1"))
+    default_stt = os.getenv("STT_MODEL", os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe"))
 
     # Store active values (will be overridden by profile)
     self.openai_chat_model = default_chat
@@ -146,21 +151,31 @@ class BaseCoreToolkit:
     # --- Named model profiles (template sets) ---
     self.model_profiles = {
       "legacy": {
-        "chat": os.getenv("OPENAI_CHAT_MODEL_LEGACY", "gpt-4-turbo-preview"),
-        "vision": os.getenv("OPENAI_VISION_MODEL_LEGACY", "gpt-4-vision-preview"),
-        "research": os.getenv("OPENAI_RESEARCH_MODEL_LEGACY", "gpt-4-turbo-preview"),
-        "stt": os.getenv("OPENAI_STT_MODEL_LEGACY", "whisper-1"),
+        "chat": os.getenv("CHAT_MODEL_LEGACY",
+                         os.getenv("OPENAI_CHAT_MODEL_LEGACY", "gpt-4-turbo-preview")),
+        "vision": os.getenv("VISION_MODEL_LEGACY",
+                           os.getenv("OPENAI_VISION_MODEL_LEGACY", "gpt-4-vision-preview")),
+        "research": os.getenv("RESEARCH_MODEL_LEGACY",
+                             os.getenv("OPENAI_RESEARCH_MODEL_LEGACY", "gpt-4-turbo-preview")),
+        "stt": os.getenv("STT_MODEL_LEGACY",
+                        os.getenv("OPENAI_STT_MODEL_LEGACY", "whisper-1")),
       },
       "current": {
-        "chat": os.getenv("OPENAI_CHAT_MODEL_CURRENT", default_chat),
-        "vision": os.getenv("OPENAI_VISION_MODEL_CURRENT", default_vision),
-        "research": os.getenv("OPENAI_RESEARCH_MODEL_CURRENT", default_research),
-        "stt": os.getenv("OPENAI_STT_MODEL_CURRENT", default_stt),
+        "chat": os.getenv("CHAT_MODEL_CURRENT",
+                         os.getenv("OPENAI_CHAT_MODEL_CURRENT", default_chat)),
+        "vision": os.getenv("VISION_MODEL_CURRENT",
+                           os.getenv("OPENAI_VISION_MODEL_CURRENT", default_vision)),
+        "research": os.getenv("RESEARCH_MODEL_CURRENT",
+                             os.getenv("OPENAI_RESEARCH_MODEL_CURRENT", default_research)),
+        "stt": os.getenv("STT_MODEL_CURRENT",
+                        os.getenv("OPENAI_STT_MODEL_CURRENT", default_stt)),
       },
     }
 
     # Select starting profile
-    self.current_model_profile = os.getenv("OPENAI_MODEL_PROFILE", "current").lower()
+    # Try new variable name first, then fall back to legacy OPENAI_MODEL_PROFILE
+    self.current_model_profile = os.getenv("MODEL_PROFILE",
+                                           os.getenv("OPENAI_MODEL_PROFILE", "current")).lower()
 
     # REDACT_MAP
     raw_redact_map = os.getenv("REDACT_MAP", "").strip()
