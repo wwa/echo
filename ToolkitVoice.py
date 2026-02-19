@@ -42,9 +42,12 @@ class BaseToolkitVoice(BaseToolkit):
   def stt(self, file=None):
     if file is None:
       file = self.data.stt.file
+    client, _, actual_model_name = self._get_client_for_model(self.stt_model)
+    if not client:
+      raise RuntimeError(f"No client available for STT model: {self.stt_model}")
     with open(file, "rb") as f:
-      return self.openai.audio.transcriptions.create(
-        model=self.openai_stt_model,
+      return client.audio.transcriptions.create(
+        model=actual_model_name,
         file=f,
         response_format="text"
       )

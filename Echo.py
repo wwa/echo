@@ -36,14 +36,14 @@ def modelOne(toolkit, messages):
 
     # Log request
     try:
-        logger.info("LLM Request: model=%s", toolkit.openai_chat_model)
+        logger.info("LLM Request: model=%s", toolkit.chat_model)
         logger.debug("LLM Request Messages: %s", json.dumps(messages, indent=2, ensure_ascii=False))
         logger.debug("LLM Tools Spec: %s", json.dumps(toolkit.toolMessage(), indent=2, ensure_ascii=False))
     except Exception:
         logger.exception("Failed logging LLM request")
         traceback.print_exc()
     print("Prompting...")
-    #trace.info("ACTION: Sending prompt to LLM (model=%s).", toolkit.openai_chat_model)
+    #trace.info("ACTION: Sending prompt to LLM (model=%s).", toolkit.chat_model)
     trace.info("ACTION: Sending prompt to LLM.")
 
     llm_res = toolkit.llm_call(
@@ -112,7 +112,7 @@ def modelLoop(toolkit, history=[]):
     try:
       used_tokens = estimate_tokens_from_messages(history_messages)
       max_tokens = MODEL_CONTEXT_LIMITS.get(
-          toolkit.openai_chat_model,
+          toolkit.chat_model,
           DEFAULT_CONTEXT_LIMIT,
       )
       threshold = int(max_tokens * CONTEXT_WARN_THRESHOLD)
@@ -186,10 +186,10 @@ def mainLoop(toolkit, limit=10):
     return "default"
 
   print(f"Active model profile: {prof_label}")
-  print(f"  chat    : {toolkit.openai_chat_model} [{get_provider_display(toolkit.openai_chat_model)}]")
-  print(f"  vision  : {toolkit.openai_vision_model} [{get_provider_display(toolkit.openai_vision_model)}]")
-  print(f"  research: {toolkit.openai_research_model} [{get_provider_display(toolkit.openai_research_model)}]")
-  print(f"  stt     : {toolkit.openai_stt_model} [{get_provider_display(toolkit.openai_stt_model)}]")
+  print(f"  chat    : {toolkit.chat_model} [{get_provider_display(toolkit.chat_model)}]")
+  print(f"  vision  : {toolkit.vision_model} [{get_provider_display(toolkit.vision_model)}]")
+  print(f"  research: {toolkit.research_model} [{get_provider_display(toolkit.research_model)}]")
+  print(f"  stt     : {toolkit.stt_model} [{get_provider_display(toolkit.stt_model)}]")
   print(f"Backend: {toolkit.llm_backend} | Providers loaded: {len(toolkit.llm_providers)}")
 
 
@@ -226,8 +226,31 @@ if __name__ == "__main__":
     # Start toolkit
     # ---------------------------------------
     toolkit = FullToolkit()
-    if not toolkit.openai:
-        raise Exception('OpenAI API not initialized')
+
+    # Check if providers for current profile models are initialized
+    profile_models = [
+        toolkit.chat_model,
+        toolkit.vision_model,
+        toolkit.research_model,
+        toolkit.stt_model,
+    ]
+
+    missing_providers = []
+    for model in profile_models:
+        client, provider_info, _ = toolkit._get_client_for_model(model)
+        if not client:
+            # Try to resolve model identifier to get provider name
+            _, provider_name = toolkit._resolve_model_identifier(model)
+            if not provider_name:
+                provider_name = "unknown"
+            missing_providers.append(f"{model} (provider: {provider_name})")
+
+    if missing_providers:
+        print("⚠️  WARNING: Some models in the current profile are not properly configured:")
+        for m in missing_providers:
+            print(f"   - {m}")
+        print("\nPlease check your LLM_PROVIDERS configuration in .env and ensure API keys are set.")
+        raise Exception('LLM providers not properly initialized for current profile')
 
     # Turn audio off for console I/O if you want:
     if os.getenv("ENABLE_LISTEN", "false").lower() == "false":

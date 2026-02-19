@@ -55,8 +55,11 @@ class BaseToolkitVisualPerception(BaseToolkit):
   def vision(self, prompt, img=None):
     img = self.selectImage(img)
     ocr = self.ocr(img)
-    res = self.openai.chat.completions.create(
-      model=self.openai_vision_model,
+    client, _, actual_model_name = self._get_client_for_model(self.vision_model)
+    if not client:
+      raise RuntimeError(f"No client available for vision model: {self.vision_model}")
+    res = client.chat.completions.create(
+      model=actual_model_name,
       max_tokens=500,
       messages=[{
         "role": "system",
