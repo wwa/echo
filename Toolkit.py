@@ -18,6 +18,7 @@ except ImportError:
 import os
 import webbrowser
 import requests
+import re
 import base64
 import pyperclip
 
@@ -109,12 +110,17 @@ class BaseCoreToolkit:
     self.llm_providers = parse_llm_providers()
     self.model_provider_map = parse_model_provider_map()
 
+    # Create reverse mapping: modelIdentifier -> modelName and providerName
+    self.model_identifier_map = {}
+    for model_name, mapping in self.model_provider_map.items():
+      model_id = mapping.get("modelIdentifier", model_name)
+      self.model_identifier_map[model_id] = {
+        "modelName": model_name,
+        "providerName": mapping.get("providerName")
+      }
+
     # Cache for provider-specific OpenAI clients
     self.provider_clients = {}
-
-    # --- Legacy OpenAI config from .env (backward compatibility) ---
-    self.openai_api_key = os.getenv("OPENAI_API_KEY")
-    self.openai_base_url = os.getenv("OPENAI_BASE_URL")
 
     # --- LLM Backend configuration ---
     # Try new variable name first, then fall back to legacy OPENAI_LLM_BACKEND
@@ -129,10 +135,10 @@ class BaseCoreToolkit:
     default_stt = os.getenv("STT_MODEL", os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe"))
 
     # Store active values (will be overridden by profile)
-    self.openai_chat_model = default_chat
-    self.openai_vision_model = default_vision
-    self.openai_research_model = default_research
-    self.openai_stt_model = default_stt
+    self.chat_model = default_chat
+    self.vision_model = default_vision
+    self.research_model = default_research
+    self.stt_model = default_stt
 
     # --- Named model profiles (template sets) ---
     self.model_profiles = {
@@ -173,18 +179,6 @@ class BaseCoreToolkit:
       self.logger.exception("Failed to parse REDACT_MAP from env; using empty map.")
       self.redact_map = {}
 
-    # OpenAI client (backward compatibility - default client)
-    client_kwargs = {}
-    if self.openai_api_key:
-      client_kwargs["api_key"] = self.openai_api_key
-    if self.openai_base_url:
-      client_kwargs["base_url"] = self.openai_base_url
-
-    if client_kwargs:
-      self.openai = OpenAI(**client_kwargs)
-    else:
-      self.openai = None
-
     # Apply selected profile at startup
     try:
       self._apply_model_profile(self.current_model_profile)
@@ -206,7 +200,8 @@ class BaseCoreToolkit:
   #
   def toolspecBySrc(self, src, context=""):
     # Generates OpenAI tool specs from source code using the current backend
-    if not self.openai:
+    client, _, _ = self._get_client_for_model(self.chat_model)
+    if not client:
       raise Exception("Model-assisted functions unavailable")
 
     system_prompt = f"""
@@ -435,69 +430,114 @@ class BaseCoreToolkit:
   #
   # --- API keys & profiles (core) ---
   #
-  def _get_client_for_model(self, model_name):
+  def _resolve_model_identifier(self, model_identifier_or_name):
+    """
+    Resolve a model identifier to the actual model name and provider.
+
+    Args:
+      model_identifier_or_name: Can be either a modelIdentifier (e.g., "openai-gpt5-mini")
+                                or a modelName (e.g., "gpt-5-mini")
+
+    Returns:
+      tuple: (modelName, providerName) or (model_identifier_or_name, None) if not found
+    """
+    # First check if it's a modelIdentifier
+    if model_identifier_or_name in self.model_identifier_map:
+      mapping = self.model_identifier_map[model_identifier_or_name]
+      return mapping["modelName"], mapping["providerName"]
+
+    # Then check if it's already a modelName
+    if model_identifier_or_name in self.model_provider_map:
+      mapping = self.model_provider_map[model_identifier_or_name]
+      return model_identifier_or_name, mapping.get("providerName")
+
+    # Not found in mapping, return as-is (for backward compatibility with unmapped models)
+    return model_identifier_or_name, None
+
+  def _get_client_for_model(self, model_identifier_or_name):
     """
     Get the appropriate client for the given model.
     Creates provider-specific clients (OpenAI, Anthropic, Google).
 
-    Returns: (client, provider_info)
+    Args:
+      model_identifier_or_name: Either a modelIdentifier or modelName
+
+    Returns: (client, provider_info, actual_model_name)
     """
-    # Check if model is in the mapping
-    if model_name in self.model_provider_map:
-      mapping = self.model_provider_map[model_name]
-      provider_name = mapping.get("providerName")
+    # Resolve the identifier to actual model name and provider
+    model_name, provider_name = self._resolve_model_identifier(model_identifier_or_name)
 
-      if provider_name and provider_name in self.llm_providers:
-        # Check if we already have a cached client for this provider
-        if provider_name in self.provider_clients:
-          return self.provider_clients[provider_name], self.llm_providers[provider_name]
+    if provider_name and provider_name in self.llm_providers:
+      # Check if we already have a cached client for this provider
+      if provider_name in self.provider_clients:
+        return self.provider_clients[provider_name], self.llm_providers[provider_name], model_name
 
-        # Create a new client for this provider
-        provider_config = self.llm_providers[provider_name]
+      # Create a new client for this provider
+      provider_config = self.llm_providers[provider_name]
+      api_key = provider_config.get("apiKey")
+      endpoint = provider_config.get("endpoint")
+
+      try:
+        client = None
+
+        # Create provider-specific client
+        if provider_name == "anthropic":
+          from anthropic import Anthropic
+          client_kwargs = {}
+          if api_key:
+            client_kwargs["api_key"] = api_key
+          if endpoint:
+            client_kwargs["base_url"] = endpoint
+          client = Anthropic(**client_kwargs) if client_kwargs else None
+
+        elif provider_name == "google":
+          import google.generativeai as genai
+          if api_key:
+            genai.configure(api_key=api_key)
+            client = genai  # Store the module itself as client
+
+        else:
+          # Default: OpenAI-compatible API
+          client_kwargs = {}
+          if api_key:
+            client_kwargs["api_key"] = api_key
+          if endpoint:
+            client_kwargs["base_url"] = endpoint
+          if client_kwargs:
+            client = OpenAI(**client_kwargs)
+
+        if client:
+          self.provider_clients[provider_name] = client
+          self.logger.info(f"Created new client for provider: {provider_name}")
+          return client, provider_config, model_name
+        else:
+          self.logger.warning(f"No API key configured for provider: {provider_name}")
+
+      except Exception as e:
+        self.logger.error(f"Failed to create client for provider {provider_name}: {e}")
+
+    # Fall back to OpenAI provider if configured
+    if "openai" in self.llm_providers:
+      if "openai" not in self.provider_clients:
+        provider_config = self.llm_providers["openai"]
         api_key = provider_config.get("apiKey")
         endpoint = provider_config.get("endpoint")
 
-        try:
-          client = None
+        client_kwargs = {}
+        if api_key:
+          client_kwargs["api_key"] = api_key
+        if endpoint:
+          client_kwargs["base_url"] = endpoint
 
-          # Create provider-specific client
-          if provider_name == "anthropic":
-            from anthropic import Anthropic
-            client_kwargs = {}
-            if api_key:
-              client_kwargs["api_key"] = api_key
-            if endpoint:
-              client_kwargs["base_url"] = endpoint
-            client = Anthropic(**client_kwargs) if client_kwargs else None
+        if client_kwargs:
+          self.provider_clients["openai"] = OpenAI(**client_kwargs)
+          self.logger.info("Created fallback OpenAI client")
 
-          elif provider_name == "google":
-            import google.generativeai as genai
-            if api_key:
-              genai.configure(api_key=api_key)
-              client = genai  # Store the module itself as client
+      if "openai" in self.provider_clients:
+        return self.provider_clients["openai"], self.llm_providers["openai"], model_name
 
-          else:
-            # Default: OpenAI-compatible API
-            client_kwargs = {}
-            if api_key:
-              client_kwargs["api_key"] = api_key
-            if endpoint:
-              client_kwargs["base_url"] = endpoint
-            if client_kwargs:
-              client = OpenAI(**client_kwargs)
-
-          if client:
-            self.provider_clients[provider_name] = client
-            self.logger.info(f"Created new client for provider: {provider_name}")
-            return client, provider_config
-          else:
-            self.logger.warning(f"No API key configured for provider: {provider_name}")
-
-        except Exception as e:
-          self.logger.error(f"Failed to create client for provider {provider_name}: {e}")
-
-    # Fall back to default OpenAI client
-    return self.openai, {"providerName": "default", "name": "Default OpenAI"}
+    self.logger.error(f"No provider configured for model: {model_identifier_or_name}")
+    return None, None, None
 
   def _update_env_var(self, key, value):
     os.environ[key] = value
@@ -618,11 +658,11 @@ class BaseCoreToolkit:
     return out
 
   @toolspec(
-    desc="Set or update API keys for external services (OpenAI, Shodan, SerpAPI).",
+    desc="Set or update API keys for LLM providers or external services. For LLM providers, updates the LLM_PROVIDERS configuration.",
     args={
       "service": {
         "type": "string",
-        "description": "Service name: 'openai', 'shodan', or 'serpapi'."
+        "description": "Service/provider name: any provider from LLM_PROVIDERS (e.g., 'openai', 'anthropic', 'google'), or 'shodan', 'serpapi'."
       },
       "api_key": {
         "type": "string",
@@ -634,27 +674,21 @@ class BaseCoreToolkit:
   )
   def setApiKey(self, service, api_key):
     svc = service.lower()
-    persisted = False
 
-    if svc == "openai":
-      self.openai_api_key = api_key
-      persisted = self._update_env_var("OPENAI_API_KEY", api_key)
-      client_kwargs = {"api_key": api_key}
-      if getattr(self, "openai_base_url", None):
-        client_kwargs["base_url"] = self.openai_base_url
-      self.openai = OpenAI(**client_kwargs)
+    # Check if it's an LLM provider
+    if svc in self.llm_providers:
+      # Update the provider's API key in memory
+      self.llm_providers[svc]["apiKey"] = api_key
 
+      # Invalidate cached client for this provider so it gets recreated with new key
+      if svc in self.provider_clients:
+        del self.provider_clients[svc]
     else:
+      available_providers = list(self.llm_providers.keys())
       return json.dumps({
         "status": "error",
-        "error": f"Unknown service '{service}'. Use one of: openai, shodan, serpapi."
+        "error": f"Unknown service '{service}'. Available LLM providers: {available_providers}. Other services: shodan, serpapi."
       })
-
-    return json.dumps({
-      "status": "success",
-      "service": svc,
-      "persisted": persisted
-    })
 
   def _apply_model_profile(self, profile_name: str) -> bool:
     profile_key = profile_name.strip().lower()
@@ -665,22 +699,22 @@ class BaseCoreToolkit:
     prof = self.model_profiles[profile_key]
 
     if "chat" in prof:
-      self.openai_chat_model = prof["chat"]
+      self.chat_model = prof["chat"]
     if "vision" in prof:
-      self.openai_vision_model = prof["vision"]
+      self.vision_model = prof["vision"]
     if "research" in prof:
-      self.openai_research_model = prof["research"]
+      self.research_model = prof["research"]
     if "stt" in prof:
-      self.openai_stt_model = prof["stt"]
+      self.stt_model = prof["stt"]
 
     self.current_model_profile = profile_key
     self.logger.info(
       "Switched model profile to '%s' (chat=%s, vision=%s, research=%s, stt=%s)",
       profile_key,
-      self.openai_chat_model,
-      self.openai_vision_model,
-      self.openai_research_model,
-      self.openai_stt_model,
+      self.chat_model,
+      self.vision_model,
+      self.research_model,
+      self.stt_model,
     )
     return True
 
@@ -725,20 +759,20 @@ class BaseCoreToolkit:
       "backend": self.llm_backend,
       "models": {
         "chat": {
-          "model": self.openai_chat_model,
-          **get_provider_info(self.openai_chat_model)
+          "model": self.chat_model,
+          **get_provider_info(self.chat_model)
         },
         "vision": {
-          "model": self.openai_vision_model,
-          **get_provider_info(self.openai_vision_model)
+          "model": self.vision_model,
+          **get_provider_info(self.vision_model)
         },
         "research": {
-          "model": self.openai_research_model,
-          **get_provider_info(self.openai_research_model)
+          "model": self.research_model,
+          **get_provider_info(self.research_model)
         },
         "stt": {
-          "model": self.openai_stt_model,
-          **get_provider_info(self.openai_stt_model)
+          "model": self.stt_model,
+          **get_provider_info(self.stt_model)
         }
       },
       "total_providers": len(self.llm_providers),
@@ -779,14 +813,14 @@ class BaseCoreToolkit:
     return {
       "status": "success",
       "profile": self.current_model_profile,
-      "chat_model": self.openai_chat_model,
-      "chat_provider": get_provider_info(self.openai_chat_model),
-      "vision_model": self.openai_vision_model,
-      "vision_provider": get_provider_info(self.openai_vision_model),
-      "research_model": self.openai_research_model,
-      "research_provider": get_provider_info(self.openai_research_model),
-      "stt_model": self.openai_stt_model,
-      "stt_provider": get_provider_info(self.openai_stt_model),
+      "chat_model": self.chat_model,
+      "chat_provider": get_provider_info(self.chat_model),
+      "vision_model": self.vision_model,
+      "vision_provider": get_provider_info(self.vision_model),
+      "research_model": self.research_model,
+      "research_provider": get_provider_info(self.research_model),
+      "stt_model": self.stt_model,
+      "stt_provider": get_provider_info(self.stt_model),
     }
 
   def _convert_to_anthropic_messages(self, messages):
@@ -871,14 +905,14 @@ class BaseCoreToolkit:
         "provider": <provider info dict>,
       }
     """
-    # Get the appropriate client for the current model
-    client, provider_info = self._get_client_for_model(self.openai_chat_model)
+    # Get the appropriate client for the current model and resolve to actual model name
+    client, provider_info, actual_model_name = self._get_client_for_model(self.chat_model)
 
     if not client:
-      raise RuntimeError(f"No client available for model: {self.openai_chat_model}")
+      raise RuntimeError(f"No client available for model: {self.chat_model}")
 
     provider_name = provider_info.get("providerName", "default")
-    self.logger.info(f"Using provider '{provider_info.get('name', 'Unknown')}' for model: {self.openai_chat_model}")
+    self.logger.info(f"Using provider '{provider_info.get('name', 'Unknown')}' for model: {self.chat_model} (resolved to: {actual_model_name})")
 
     backend = getattr(self, "llm_backend", "completions").lower()
     tools = tools if tools is not None else self.toolMessage()
@@ -892,7 +926,7 @@ class BaseCoreToolkit:
     if provider_name == "anthropic":
       system_content, anthropic_messages = self._convert_to_anthropic_messages(messages)
 
-      call_kwargs = {"model": self.openai_chat_model, "messages": anthropic_messages, "max_tokens": kwargs.get("max_tokens", 4096)}
+      call_kwargs = {"model": actual_model_name, "messages": anthropic_messages, "max_tokens": kwargs.get("max_tokens", 4096)}
       if system_content:
         call_kwargs["system"] = system_content
 
@@ -919,7 +953,7 @@ class BaseCoreToolkit:
     elif provider_name == "google":
       system_instruction, gemini_messages = self._convert_to_gemini_messages(messages)
 
-      model = client.GenerativeModel(self.openai_chat_model, system_instruction=system_instruction)
+      model = client.GenerativeModel(actual_model_name, system_instruction=system_instruction)
 
       # Convert to single conversation
       if gemini_messages:
@@ -944,7 +978,7 @@ class BaseCoreToolkit:
     # ---------------- OPENAI CHAT COMPLETIONS ----------------
     elif backend == "completions":
       res = client.chat.completions.create(
-        model=self.openai_chat_model,
+        model=actual_model_name,
         messages=messages,
         tools=tools,
         tool_choice=tool_choice,
@@ -967,7 +1001,7 @@ class BaseCoreToolkit:
         tools_for_responses = self._tools_for_responses(tools)
 
         res = client.responses.create(
-            model=self.openai_chat_model,
+            model=actual_model_name,
             input=input_items,
             tools=tools_for_responses,
             **kwargs,
@@ -1274,7 +1308,7 @@ class BaseToolkit(BaseCoreToolkit):
       return '{"status": "error", "reason": "Clipboard not accessible"}'
 
   @toolspec(
-    desc="Change which OpenAI model the toolkit uses at runtime.",
+    desc="Change which model the toolkit uses at runtime for a specific purpose.",
     args={
       "target": {
         "type": "string",
@@ -1282,21 +1316,21 @@ class BaseToolkit(BaseCoreToolkit):
       },
       "model": {
         "type": "string",
-        "description": "New OpenAI model name, e.g. 'gpt-4.1-mini' or 'gpt-4.1'."
+        "description": "New model identifier or name, e.g. 'openai-gpt5-mini' or 'claude-sonnet-3.5'."
       }
     },
     reqs=["target", "model"]
   )
-  def setOpenAIModel(self, target, model):
+  def setModel(self, target, model):
     target_l = target.lower()
     if target_l == "chat":
-      self.openai_chat_model = model
+      self.chat_model = model
     elif target_l == "vision":
-      self.openai_vision_model = model
+      self.vision_model = model
     elif target_l == "research":
-      self.openai_research_model = model
+      self.research_model = model
     elif target_l == "stt":
-      self.openai_stt_model = model
+      self.stt_model = model
     else:
       return json.dumps({
         "status": "error",

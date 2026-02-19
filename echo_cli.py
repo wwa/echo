@@ -144,10 +144,10 @@ def promptOption(prompt, history, toolkit):
             prof_key = toolkit.current_model_profile
             prof_label = prof_key.capitalize()
             print(f"Active model profile: {prof_label}\n" +
-                  f"  chat    : {toolkit.openai_chat_model}\n" +
-                  f"  vision  : {toolkit.openai_vision_model}\n" +
-                  f"  research: {toolkit.openai_research_model}\n" +
-                  f"  stt     : {toolkit.openai_stt_model}")
+                  f"  chat    : {toolkit.chat_model}\n" +
+                  f"  vision  : {toolkit.vision_model}\n" +
+                  f"  research: {toolkit.research_model}\n" +
+                  f"  stt     : {toolkit.stt_model}")
         else:
             print("Toolkit does not support model profiles.")
         return "continue"
@@ -159,10 +159,10 @@ def promptOption(prompt, history, toolkit):
             ok = toolkit._apply_model_profile(profile)
             if ok:
                 print(f"Model profile switched to '{profile}'.")
-                print(f"  chat    : {toolkit.openai_chat_model}")
-                print(f"  vision  : {toolkit.openai_vision_model}")
-                print(f"  research: {toolkit.openai_research_model}")
-                print(f"  stt     : {toolkit.openai_stt_model}")
+                print(f"  chat    : {toolkit.chat_model}")
+                print(f"  vision  : {toolkit.vision_model}")
+                print(f"  research: {toolkit.research_model}")
+                print(f"  stt     : {toolkit.stt_model}")
             else:
                 print(f"Unknown profile '{profile}'. Available: {', '.join(toolkit.model_profiles.keys())}")
         else:
