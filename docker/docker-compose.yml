@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  echo:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: echo-v1:latest
+    container_name: echo-assistant
+    stdin_open: true
+    tty: true
+    volumes:
+      # Mount .env file for configuration
+      - ../.env:/app/.env:ro
+      # Mount data directory for persistent storage
+      - ../data:/app/data
+      # Optional: Mount logs directory if you want to persist logs
+      - ../logs:/app/logs
+    environment:
+      # Virtual display (Xvfb) is automatically started in the container
+      - DISPLAY=:99
