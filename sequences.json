@@ -1,0 +1,32 @@
+[
+  {
+    "name": "example",
+    "desc": "Example vulnerability scan sequence",
+    "autoExecute": false,
+    "cmds": [
+      "profile current",
+      "listtools enabled",
+      "testcmd"
+    ]
+  },
+  {
+    "name": "exampleVunScan",
+    "desc": "Example vulnerability scan sequence",
+    "autoExecute": false,
+    "cmds": [
+      "NVD search CVE-2013-6026",
+      "add to tools: write test if a host is vulnerable to this cve, verify if tool is corectly created",
+      "shodan search for redactedIP then check if its vulnerable to the mentioned cve, i'm authorized",
+      "Attempt to retrieve additional admin pages or configuration endpoints (requires careful, authorized testing)?",
+      "I confirm I am authorized — proceed"
+    ]
+  },
+  {
+    "name": "exampleSQLiScan",
+    "desc": "Example vulnerability SQLi scan sequence",
+    "autoExecute": false,
+    "cmds": [
+      "T.B.A"
+    ]
+  }
+]

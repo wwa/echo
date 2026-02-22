@@ -23,6 +23,11 @@ helpText = (
     "  toggletool NAME STATE         - Enable or disable a tool (STATE = enabled|disabled)\n"
     "  toolinfo NAME                 - Show parameters and source code for a tool\n\n"
 
+    "Sequences:\n"
+    "  sequence                      - List all available command sequences\n"
+    "  sequence list                 - List all available command sequences\n"
+    "  sequence <NAME>               - Execute a command sequence (with step-by-step authorization)\n\n"
+
     "Utility:\n"
     "  testcmd                       - Run vulnerability DB test prompt\n"
 )
@@ -41,6 +46,11 @@ shortHelpText = (
     "  listtools                     - List all tools\n"
     "  toggletool NAME STATE         - Enable or disable a tool (STATE = enabled|disabled)\n"
     "  toolinfo NAME                 - Show parameters and source code for a tool\n\n"
+
+    "Sequences:\n"
+    "  sequence                      - List all command sequences\n"
+    "  sequence <NAME>               - Execute a command sequence\n\n"
+
     "For more commands please type help \n\n"
 )
 
@@ -52,6 +62,111 @@ def normalize_llm_output(text):
             .replace('\\"', '"')
             .replace("\\'", "'")
     )
+
+def load_sequences():
+    """Load command sequences from sequences.json file"""
+    try:
+        seq_file = os.path.join(os.path.dirname(__file__), "sequences.json")
+        if os.path.exists(seq_file):
+            with open(seq_file, "r") as f:
+                return json.load(f)
+        return []
+    except Exception as e:
+        print(f"Error loading sequences: {e}")
+        return []
+
+def display_sequences():
+    """Display all available sequences in a formatted table"""
+    sequences = load_sequences()
+    if not sequences:
+        print("No sequences available.")
+        return
+
+    print("\n" + "=" * 80)
+    print("Available Command Sequences".center(80))
+    print("=" * 80)
+
+    for seq in sequences:
+        name = seq.get("name", "unnamed")
+        desc = seq.get("desc", "No description")
+        cmds = seq.get("cmds", [])
+        auto_exec = seq.get("autoExecute", False)
+
+        auto_label = "🤖 AUTO" if auto_exec else "👤 MANUAL"
+
+        print(f"\n📋 {name} [{auto_label}]")
+        print(f"   {desc}")
+        print(f"   Steps: {len(cmds)}")
+        print("   " + "-" * 76)
+        for i, cmd in enumerate(cmds, 1):
+            print(f"   {i}. {cmd}")
+
+    print("\n" + "=" * 80 + "\n")
+
+def execute_sequence(seq_name, toolkit, history, start_from=1, show_prev_completed=False):
+    """Execute a command sequence with step-by-step authorization"""
+    sequences = load_sequences()
+    sequence = next((s for s in sequences if s.get("name") == seq_name), None)
+
+    if not sequence:
+        print(f"⚠️  WARNING: Sequence '{seq_name}' not found.")
+        return "continue"
+
+    cmds = sequence.get("cmds", [])
+    if not cmds:
+        print("⚠️  WARNING: Sequence has no commands.")
+        return "continue"
+
+    auto_execute = sequence.get("autoExecute", False)
+    mode_label = "🤖 AUTO MODE" if auto_execute else "👤 MANUAL MODE"
+
+    if start_from == 1:
+        print(f"\n🚀 Starting sequence: {sequence.get('name')} [{mode_label}]")
+        print(f"   {sequence.get('desc', 'No description')}")
+        print(f"   Total steps: {len(cmds)}\n")
+
+    for i in range(start_from - 1, len(cmds)):
+        step_num = i + 1
+        cmd = cmds[i]
+        is_last = (step_num == len(cmds))
+        step_label = "LAST STEP" if is_last else f"Step {step_num}/{len(cmds)}"
+
+        print(f"\n{'='*60}")
+        if show_prev_completed and i == start_from - 1:
+            print(f"⚠️  Step {step_num - 1}/{len(cmds)} completed.")
+            print(f"{'='*60}")
+        print(f"⚠️  {step_label}: {cmd}")
+        if not auto_execute:
+            print(f"⚠️  Press ENTER to continue, or type anything to stop sequence.")
+        print(f"{'='*60}")
+
+        if not auto_execute:
+            response = input(">> ").strip()
+
+            if response:
+                print("\n⚠️  WARNING: Sequence cancelled by user.")
+                return "continue"
+
+        # Execute the command
+        result = promptOption(cmd, history, toolkit)
+
+        if result == "break":
+            print("\n⚠️  WARNING: Sequence terminated.")
+            return "break"
+        elif result is None:
+            # It's a user prompt that needs LLM processing
+            print(f"\n▶️  Executing with LLM: {cmd}")
+            return ("sequence_exec", seq_name, cmd, step_num, len(cmds), auto_execute)
+
+        # In auto mode, continue automatically
+        if auto_execute:
+            if is_last:
+                print(f"\n✅ Final step completed!")
+            else:
+                print(f"\n✓ Step {step_num}/{len(cmds)} completed, continuing...")
+
+    print(f"\n✅ Sequence '{seq_name}' completed successfully!\n")
+    return "continue"
 
 def promptOption(prompt, history, toolkit):
     if prompt.lower() in ("exit", "e"):
@@ -259,5 +374,22 @@ def promptOption(prompt, history, toolkit):
         toolkit.data.prompt = test_prompt
         print(f"[TestCmd] Using test prompt: {test_prompt}")
         return "test_vuln"
+
+    elif prompt.lower() == "sequence" or prompt.lower() == "sequence list":
+        display_sequences()
+        return "continue"
+
+    elif prompt.lower().startswith("sequence "):
+        parts = prompt.split(maxsplit=1)
+        if len(parts) >= 2:
+            seq_name = parts[1].strip()
+            if seq_name.lower() == "list":
+                display_sequences()
+                return "continue"
+            else:
+                return execute_sequence(seq_name, toolkit, history)
+        else:
+            display_sequences()
+            return "continue"
 
     return None
