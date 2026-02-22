@@ -1,0 +1,35 @@
+[
+  {
+    "name": "current",
+    "desc": "Use latest models from various providers",
+    "isLegacy": false,
+    "models": {
+      "chat": "openai-gpt5-mini",
+      "vision": "openai-gpt5",
+      "research": "openai-gpt5.2",
+      "stt": "openai-gpt4o-mini-transcribe"
+    }
+  },
+  {
+    "name": "current_mixed",
+    "desc": "Use latest models from various providers (mixed)",
+    "isLegacy": false,
+    "models": {
+      "chat": "pcss_DeepSeek-V3.1-vLLM",
+      "vision": "openai-gpt5",
+      "research": "pcss_DeepSeek-V3.1-vLLM",
+      "stt": "openai-gpt4o-mini-transcribe"
+    }
+  },
+  {
+    "name": "legacy",
+    "desc": "Use older, more stable models",
+    "isLegacy": true,
+    "models": {
+      "chat": "openai-gpt4o-mini",
+      "vision": "openai-gpt4-vision-preview",
+      "research": "openai-gpt4-turbo-preview",
+      "stt": "openai-whisper-1"
+    }
+  }
+]
