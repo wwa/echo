@@ -12,7 +12,7 @@ from echo_config import (
     MODEL_CONTEXT_LIMITS,
     DEFAULT_CONTEXT_LIMIT,
 )
-from echo_cli import promptOption, shortHelpText, normalize_llm_output
+from echo_cli import promptOption, shortHelpText, normalize_llm_output, execute_sequence
 
 def estimate_tokens_from_messages(messages):
     total_chars = 0
@@ -193,8 +193,42 @@ def mainLoop(toolkit, limit=10):
   print(f"Backend: {toolkit.llm_backend} | Providers loaded: {len(toolkit.llm_providers)}")
 
 
+  # Sequence state tracking
+  sequence_state = None
+
   while True:
     try:
+      # If we're in sequence mode and waiting after LLM response
+      if sequence_state:
+        seq_name, step_num, total_steps, auto_exec = sequence_state
+        is_last_step = (step_num == total_steps)
+
+        if is_last_step:
+          print(f"\n{'='*60}")
+          print(f"⚠️  Step {step_num}/{total_steps} completed.")
+          print(f"{'='*60}")
+          print("\n✅ Sequence completed successfully!\n")
+          sequence_state = None
+          continue
+
+        # Continue with next step (showing previous completion)
+        sequence_state = None
+        lOps = execute_sequence(seq_name, toolkit, history, start_from=step_num + 1, show_prev_completed=True)
+
+        if lOps == "break":
+          break
+        elif lOps == "continue":
+          continue
+        elif isinstance(lOps, tuple) and lOps[0] == "sequence_exec":
+          # Another LLM step
+          _, seq_name, seq_cmd, step_num, total_steps, auto_exec = lOps
+          print(f"User input: {seq_cmd}")
+          sequence_state = (seq_name, step_num, total_steps, auto_exec)
+          content, history = modelLoop(toolkit, history)
+          history = history[:limit]
+          print(content)
+        continue
+
       prompt = toolkit.input(">> ")
 
       lOps = promptOption(prompt, history, toolkit)
@@ -204,6 +238,19 @@ def mainLoop(toolkit, limit=10):
         continue
       elif lOps == "test_vuln":
         print(f"User input (TestCmd): {toolkit.userPrompt()}")
+      elif isinstance(lOps, tuple) and lOps[0] == "sequence_exec":
+        # Sequence is executing an LLM command
+        _, seq_name, seq_cmd, step_num, total_steps, auto_exec = lOps
+        print(f"User input: {seq_cmd}")
+
+        # Store sequence state for after LLM response
+        sequence_state = (seq_name, step_num, total_steps, auto_exec)
+
+        # Execute LLM
+        content, history = modelLoop(toolkit, history)
+        history = history[:limit]
+        print(content)
+        continue
       else:
         print(f"User input: {prompt}")
 
