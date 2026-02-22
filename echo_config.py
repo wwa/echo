@@ -70,10 +70,12 @@ def parse_model_provider_map():
                 continue
             model_name = entry.get("modelName")
             if model_name:
-                model_map[model_name] = {
-                    "providerName": entry.get("providerName"),
-                    "modelIdentifier": entry.get("modelIdentifier", model_name),
-                }
+                # Store the full entry, not just providerName and modelIdentifier
+                # This includes all fields like supportsToolChoice, assistantsFallbackModel, etc.
+                model_map[model_name] = entry.copy()
+                # Ensure modelIdentifier has a default if not specified
+                if "modelIdentifier" not in model_map[model_name]:
+                    model_map[model_name]["modelIdentifier"] = model_name
 
         return model_map
     except json.JSONDecodeError as e:
