@@ -25,8 +25,18 @@ import pyperclip
 
 from io import BytesIO
 
+import subprocess
+import shlex
+
 import pywinctl as pwc
 import pyautogui
+
+
+# Tool imports (External)
+import shodan
+import serpapi
+import arxiv
+import pyxploitdb
 
 #Tool import tools
 from echo_config import HISTORY_ENTRIES_LIMIT
@@ -126,6 +136,9 @@ class BaseCoreToolkit:
     # Try new variable name first, then fall back to legacy OPENAI_LLM_BACKEND
     self.llm_backend = os.getenv("LLM_BACKEND",
                                   os.getenv("OPENAI_LLM_BACKEND", "completions")).lower()
+
+    # --- Default fallback model for assistants tool choice ---
+    self.default_assistants_fallback_model = os.getenv("DEFAULT_ASSISTANTS_FALLBACK_MODEL", None)
 
     # --- Base model values (used for 'current' profile by default) ---
     # Try new variable names first, then fall back to legacy OPENAI_ prefixed names
@@ -453,6 +466,26 @@ class BaseCoreToolkit:
 
     # Not found in mapping, return as-is (for backward compatibility with unmapped models)
     return model_identifier_or_name, None
+
+  def _get_model_config(self, model_identifier_or_name):
+    """
+    Get the model configuration from the model mappings.
+
+    Args:
+      model_identifier_or_name: Either a modelIdentifier or modelName
+
+    Returns:
+      dict: Model config or None if not found
+    """
+    # First check if it's a modelIdentifier
+    if model_identifier_or_name in self.model_identifier_map:
+      return self.model_identifier_map[model_identifier_or_name]
+
+    # Then check if it's already a modelName
+    if model_identifier_or_name in self.model_provider_map:
+      return self.model_provider_map[model_identifier_or_name]
+
+    return None
 
   def _get_client_for_model(self, model_identifier_or_name):
     """
@@ -1297,6 +1330,19 @@ class BaseToolkit(BaseCoreToolkit):
   )
   def clipboardRead(self):
     self.trace.info("ACTION: Attempting to read your clipboard.")
+    img = None
+
+    # Try image clipboard first
+    try:
+      img = ImageGrab.grabclipboard()
+    except NotImplementedError as e:
+      print(f"Image clipboard not supported on this system: {e}")
+    except Exception as e:
+      print(f"Error grabbing image from clipboard: {e}")
+
+    if isinstance(img, Image.Image):
+      self.data.clipboard = img
+      return '{"status": "success", "type": "image"}'
 
     # Fallback to text via pyperclip
     try:
