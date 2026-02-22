@@ -140,6 +140,9 @@ class BaseCoreToolkit:
     self.llm_backend = os.getenv("LLM_BACKEND",
                                   os.getenv("OPENAI_LLM_BACKEND", "completions")).lower()
 
+    # --- Default fallback model for assistants tool choice ---
+    self.default_assistants_fallback_model = os.getenv("DEFAULT_ASSISTANTS_FALLBACK_MODEL", None)
+
     # --- Base model values (used for 'current' profile by default) ---
     # Try new variable names first, then fall back to legacy OPENAI_ prefixed names
     default_chat = os.getenv("CHAT_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini"))
@@ -466,6 +469,26 @@ class BaseCoreToolkit:
 
     # Not found in mapping, return as-is (for backward compatibility with unmapped models)
     return model_identifier_or_name, None
+
+  def _get_model_config(self, model_identifier_or_name):
+    """
+    Get the model configuration from the model mappings.
+
+    Args:
+      model_identifier_or_name: Either a modelIdentifier or modelName
+
+    Returns:
+      dict: Model config or None if not found
+    """
+    # First check if it's a modelIdentifier
+    if model_identifier_or_name in self.model_identifier_map:
+      return self.model_identifier_map[model_identifier_or_name]
+
+    # Then check if it's already a modelName
+    if model_identifier_or_name in self.model_provider_map:
+      return self.model_provider_map[model_identifier_or_name]
+
+    return None
 
   def _get_client_for_model(self, model_identifier_or_name):
     """
@@ -1599,9 +1622,18 @@ class Toolkit(BaseToolkit):
     ass = None
     thr = None
     if not research_id:
-      client, _, actual_model_name = self._get_client_for_model(self.research_model)
+      client, provider_info, actual_model_name = self._get_client_for_model(self.research_model)
       if not client:
         return json.dumps({"status": "error", "error": "Research model client not available"})
+
+      # Prepare extra params for providers requiring custom_llm_provider (e.g., LiteLLM)
+      extra_params = {}
+      if provider_info and provider_info.get("requireCustomLlmProvider"):
+        # Extract custom_llm_provider from model name
+        if "_" in actual_model_name:
+          # Format: provider_model (e.g., pcss_gpt_oss_120b)
+          potential_provider = actual_model_name.split("_")[0]
+          extra_params["extra_headers"] = {"custom-llm-provider": potential_provider}
 
       ass = client.beta.assistants.create(
         instructions="""
@@ -1611,7 +1643,8 @@ class Toolkit(BaseToolkit):
               """,
         name="Echo research",
         tools=[{"type": "code_interpreter"}, {"type": "retrieval"}],
-        model=actual_model_name
+        model=actual_model_name,
+        **extra_params
       )
       thr = client.beta.threads.create(metadata={'aid': ass.id})
       print(f"New research context: {thr.id}")
@@ -1637,7 +1670,80 @@ class Toolkit(BaseToolkit):
     print(f"Research query: {query}")
     ts_s = timer()
     client.beta.threads.messages.create(thread_id=thr.id, role="user", content=query)
-    run = client.beta.threads.runs.create(assistant_id=ass.id, thread_id=thr.id)
+
+    # Prepare run params - check if model has explicit assistantsToolChoiceOverride or use supportsToolChoice
+    model_config = self._get_model_config(self.research_model)
+    run_params = {"assistant_id": ass.id, "thread_id": thr.id}
+
+    # Check if we should use a fallback model for tool choice decisions
+    use_fallback_for_tools = False
+    fallback_model = None
+    if model_config:
+      # Check for model-specific fallback first
+      if "assistantsFallbackModel" in model_config:
+        fallback_model = model_config["assistantsFallbackModel"]
+        use_fallback_for_tools = True
+        print(f"Using model-specific fallback '{fallback_model}' for tool choice decisions")
+      # If model doesn't support tools and has no specific fallback, use default
+      elif model_config.get("supportsToolChoice") is False and self.default_assistants_fallback_model:
+        fallback_model = self.default_assistants_fallback_model
+        use_fallback_for_tools = True
+        print(f"Using default fallback model '{fallback_model}' for tool choice decisions")
+
+    if model_config and not use_fallback_for_tools:
+      # If explicit assistantsToolChoiceOverride is set, use it (allows manual override)
+      if "assistantsToolChoiceOverride" in model_config:
+        run_params["tool_choice"] = model_config["assistantsToolChoiceOverride"]
+      # Otherwise, fall back to supportsToolChoice flag
+      elif model_config.get("supportsToolChoice") is False:
+        run_params["tool_choice"] = "none"
+
+    # If using fallback model for tools, ask it to decide
+    if use_fallback_for_tools:
+      # Use fallback model to determine which tools to use
+      fallback_client, _, fallback_model_name = self._get_client_for_model(fallback_model)
+      if fallback_client:
+        tool_decision_prompt = f"""Analyze this research query and decide if tools are needed:
+
+Query: {query}
+Available files: {files if files else 'None'}
+
+Available tools:
+1. code_interpreter - For running Python code, calculations, data analysis
+2. retrieval - For searching and extracting information from uploaded files
+
+Respond in JSON format:
+{{"needs_tools": true/false, "tools_needed": ["code_interpreter", "retrieval"], "reasoning": "why these tools are needed"}}"""
+
+        try:
+          tool_decision = self.llm_call(
+            messages=[{"role": "user", "content": tool_decision_prompt}],
+            response_format={"type": "json_object"},
+            model_override=fallback_model
+          )
+
+          # Parse the decision
+          if self.llm_backend == "completions":
+            decision_content = tool_decision["raw"].choices[0].message.content
+          else:
+            first_step = tool_decision["raw"].output[0]
+            text_block = next(c for c in first_step.content if getattr(c, "type", None) in ("output_text", "message", None))
+            decision_content = getattr(text_block, "text", str(text_block))
+
+          decision = json.loads(decision_content)
+          print(f"Fallback model decision: {decision}")
+
+          # If tools are needed, use "auto", otherwise "none"
+          if decision.get("needs_tools"):
+            run_params["tool_choice"] = "auto"
+          else:
+            run_params["tool_choice"] = "none"
+        except Exception as e:
+          print(f"Error getting tool decision from fallback model: {e}")
+          # Fall back to disabling tools
+          run_params["tool_choice"] = "none"
+
+    run = client.beta.threads.runs.create(**run_params)
 
     while run.status != "completed":
       time.sleep(1)
