@@ -123,14 +123,14 @@ class BaseCoreToolkit:
     self.llm_providers = parse_llm_providers()
     self.model_provider_map = parse_model_provider_map()
 
-    # Create reverse mapping: modelIdentifier -> modelName and providerName
+    # Create reverse mapping: modelIdentifier -> full model config
     self.model_identifier_map = {}
     for model_name, mapping in self.model_provider_map.items():
       model_id = mapping.get("modelIdentifier", model_name)
-      self.model_identifier_map[model_id] = {
-        "modelName": model_name,
-        "providerName": mapping.get("providerName")
-      }
+      # Store the full mapping, including all fields like supportsToolChoice, assistantsFallbackModel, etc.
+      self.model_identifier_map[model_id] = mapping.copy()
+      # Ensure modelName is included in the mapping
+      self.model_identifier_map[model_id]["modelName"] = model_name
 
     # Cache for provider-specific OpenAI clients
     self.provider_clients = {}
@@ -989,6 +989,25 @@ class BaseCoreToolkit:
       if not tools:
         tools = kwargs["tools"]
       kwargs.pop("tools")
+
+    # Check if model supports tool choice - if not, use fallback model if configured
+    model_config = self._get_model_config(self.chat_model)
+    self.logger.debug(f"Model config for {self.chat_model}: {model_config}")
+    self.logger.debug(f"supportsToolChoice: {model_config.get('supportsToolChoice') if model_config else 'N/A'}, tools: {bool(tools)}")
+
+    if model_config and model_config.get("supportsToolChoice") is False and tools:
+      # Check for model-specific or default fallback
+      fallback_model_id = model_config.get("assistantsFallbackModel") or self.default_assistants_fallback_model
+
+      if fallback_model_id:
+        self.logger.info(f"Model {self.chat_model} doesn't support tools, switching to fallback model {fallback_model_id} for this call")
+        # Use fallback model client for this call (don't modify self.chat_model)
+        client, provider_info, actual_model_name = self._get_client_for_model(fallback_model_id)
+        provider_name = provider_info.get("providerName", "default")
+      else:
+        self.logger.warning(f"Model {self.chat_model} doesn't support tools and no fallback configured, disabling tools")
+        tools = None
+        tool_choice = "none"
 
     # ---------------- ANTHROPIC (CLAUDE) ----------------
     if provider_name == "anthropic":
