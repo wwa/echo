@@ -1301,6 +1301,15 @@ class BaseToolkit(BaseCoreToolkit):
 
     return text
 
+  def set_prompt(self, text):
+    """Set user prompt programmatically (e.g., from sequences) without console input"""
+    self.data.prompt_raw = text
+    # Apply redacted placeholder expansion (only if redacted mode is ON)
+    effective = self._expand_redacted_placeholders(text)
+    self.data.prompt = effective
+    self.add_user_history(text)
+    return effective
+
   def userPrompt(self):
     return self.data.prompt
 

@@ -222,7 +222,11 @@ def mainLoop(toolkit, limit=10):
         elif isinstance(lOps, tuple) and lOps[0] == "sequence_exec":
           # Another LLM step
           _, seq_name, seq_cmd, step_num, total_steps, auto_exec = lOps
+
+          # Set user prompt using toolkit method (handles redaction expansion)
+          toolkit.set_prompt(seq_cmd)
           print(f"User input: {seq_cmd}")
+
           sequence_state = (seq_name, step_num, total_steps, auto_exec)
           content, history = modelLoop(toolkit, history)
           history = history[:limit]
@@ -241,6 +245,9 @@ def mainLoop(toolkit, limit=10):
       elif isinstance(lOps, tuple) and lOps[0] == "sequence_exec":
         # Sequence is executing an LLM command
         _, seq_name, seq_cmd, step_num, total_steps, auto_exec = lOps
+
+        # Set user prompt using toolkit method (handles redaction expansion)
+        toolkit.set_prompt(seq_cmd)
         print(f"User input: {seq_cmd}")
 
         # Store sequence state for after LLM response
