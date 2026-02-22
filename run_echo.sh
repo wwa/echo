@@ -1,37 +1,90 @@
-#!/bin/bash
-
-# Simple ECHO Docker Runner
-# Builds/runs container and starts Echo.py interactively
-
+#!/usr/bin/env bash
 set -e
 
-# Check if .env exists
-if [ ! -f .env ]; then
-    echo "Error: .env file not found!"
-    exit 1
+VENV_DIR="vEcho"
+LOG_DIR="logs"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# ---------------------------------------------------
+# LOAD .env INTO SHELL ENVIRONMENT
+# ---------------------------------------------------
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
 fi
 
-# Parse build flag
-BUILD_FLAG=""
-if [ "$1" == "--build" ] || [ "$1" == "-b" ]; then
-    BUILD_FLAG="--build"
-    echo "Building Docker image..."
+mkdir -p "$LOG_DIR"
+
+IMPORTANT_LOG="$LOG_DIR/important.log"
+LLM_LOG="$LOG_DIR/llm.log"
+OTHER_LOG="$LOG_DIR/other.log"
+TRACE_LOG="$LOG_DIR/trace.log"
+TOOLS_LOG="$LOG_DIR/tools.log"
+
+SHOW_EXTRA_WINDOWS="${SHOW_EXTRA_WINDOWS:-true}"
+
+# Array to store PIDs of extra log windows
+EXTRA_PIDS=()
+
+cleanup_extra_windows() {
+  echo "🧹 Closing extra log windows..."
+  for pid in "${EXTRA_PIDS[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+# Trigger window cleanup
+trap cleanup_extra_windows EXIT INT TERM
+
+start_tail_for() {
+  local title="$1"
+  local file="$2"
+
+  if command -v gnome-terminal >/dev/null 2>&1; then
+    gnome-terminal -- bash -c "echo '$title'; echo 'Tailing $file'; tail -f \"$file\"; exec bash" &
+    EXTRA_PIDS+=($!)
+
+  elif command -v konsole >/dev/null 2>&1; then
+    konsole -e bash -c "echo '$title'; echo 'Tailing $file'; tail -f \"$file\"; exec bash" &
+    EXTRA_PIDS+=($!)
+
+  elif command -v x-terminal-emulator >/dev/null 2>&1; then
+    x-terminal-emulator -e bash -c "echo '$title'; echo 'Tailing $file'; tail -f \"$file\"; exec bash" &
+    EXTRA_PIDS+=($!)
+
+  else
+    echo "⚠️ Could not auto-open a terminal for '$title'. Run manually:"
+    echo "    tail -f $file"
+  fi
+}
+
+# ---------------------------------------------------
+# SHOW EXTRA WINDOWS
+# ---------------------------------------------------
+if [ "$SHOW_EXTRA_WINDOWS" = "true" ]; then
+  start_tail_for "IMPORTANT LOG (INFO+)" "$IMPORTANT_LOG"
+  start_tail_for "LLM LOG (requests/responses)" "$LLM_LOG"
+  start_tail_for "OTHER LOG (DEBUG+ app/tool)" "$OTHER_LOG"
+  start_tail_for "TRACE LOG (actions/flow)" "$TRACE_LOG"
+  start_tail_for "TOOLS LOG (toolkit/tool calls)" "$TOOLS_LOG"
+else
+  echo "Extra windows disabled. Logs only saved to file."
 fi
 
-# Create directories
-mkdir -p data logs
-
-# Build image if needed
-if [ -n "$BUILD_FLAG" ]; then
-    docker build -t echo-v1:latest -f docker/Dockerfile .
+# ---------------------------------------------------
+# CHECK VIRTUAL ENVIRONMENT
+# ---------------------------------------------------
+if [ ! -d "$VENV_DIR" ]; then
+  echo "❌ Virtualenv '$VENV_DIR' not found."
+  exit 1
 fi
 
-# Run container with Echo.py
-echo "Starting ECHO assistant..."
-docker run --rm -it \
-    --name echo-assistant \
-    -v "$(pwd)/.env:/app/.env:ro" \
-    -v "$(pwd)/data:/app/data" \
-    -v "$(pwd)/logs:/app/logs" \
-    -e DISPLAY=:99 \
-    echo-v1:latest
+source "$VENV_DIR/bin/activate"
+
+echo "🚀 Starting Echo..."
+python ./Echo.py
