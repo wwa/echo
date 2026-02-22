@@ -7,6 +7,7 @@ helpText = (
     "Available commands:\n"
     "  history                       - Show conversation history\n"
     "  export [FILENAME]             - Export command history to file (default: echo_history.txt)\n"
+    "  export_session [FILENAME]     - Export current session prompts (default: echo_session.txt)\n"
     "  clear                         - Clear conversation history\n"
     "  reset                         - Reset all toolkit state\n"
     "  exit                          - Quit ECHO\n\n"
@@ -36,6 +37,7 @@ shortHelpText = (
     "Available commands:\n"
     "  history                       - Show conversation history\n"
     "  export [FILENAME]             - Export command history to file\n"
+    "  export_session [FILENAME]     - Export current session prompts\n"
     "  clear                         - Clear conversation history\n"
     "  exit                          - Quit ECHO\n\n"
 
@@ -178,6 +180,35 @@ def promptOption(prompt, history, toolkit):
         return "continue"
     elif prompt.lower() in ("history_user", "hhu"):
         print(toolkit.get_user_history())
+        return "continue"
+
+    elif prompt.lower().startswith("export_session"):
+        parts = prompt.split(maxsplit=1)
+        filename = parts[1].strip() if len(parts) > 1 else "echo_session.txt"
+
+        try:
+            session_history = toolkit.get_user_history()
+            
+            if not session_history:
+                print("No prompts in current session.")
+                return "continue"
+            
+            dest_path = os.path.join(os.getcwd(), filename)
+            
+            with open(dest_path, 'w', encoding='utf-8') as f:
+                f.write(f"# ECHO Session Export\n")
+                f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"# Total prompts: {len(session_history)}\n\n")
+                
+                for idx, prompt in enumerate(session_history, 1):
+                    f.write(f"[{idx}] {prompt}\n")
+            
+            print(f"Session history exported to: {dest_path}")
+            print(f"Total prompts exported: {len(session_history)}")
+        except Exception as e:
+            print(f"Failed to export session history: {e}")
+            traceback.print_exc()
+
         return "continue"
 
     elif prompt.lower().startswith("export"):
