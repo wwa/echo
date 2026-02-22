@@ -153,29 +153,9 @@ class BaseCoreToolkit:
     self.research_model = default_research
     self.stt_model = default_stt
 
-    # --- Named model profiles (template sets) ---
-    self.model_profiles = {
-      "legacy": {
-        "chat": os.getenv("CHAT_MODEL_LEGACY",
-                         os.getenv("OPENAI_CHAT_MODEL_LEGACY", "gpt-4-turbo-preview")),
-        "vision": os.getenv("VISION_MODEL_LEGACY",
-                           os.getenv("OPENAI_VISION_MODEL_LEGACY", "gpt-4-vision-preview")),
-        "research": os.getenv("RESEARCH_MODEL_LEGACY",
-                             os.getenv("OPENAI_RESEARCH_MODEL_LEGACY", "gpt-4-turbo-preview")),
-        "stt": os.getenv("STT_MODEL_LEGACY",
-                        os.getenv("OPENAI_STT_MODEL_LEGACY", "whisper-1")),
-      },
-      "current": {
-        "chat": os.getenv("CHAT_MODEL_CURRENT",
-                         os.getenv("OPENAI_CHAT_MODEL_CURRENT", default_chat)),
-        "vision": os.getenv("VISION_MODEL_CURRENT",
-                           os.getenv("OPENAI_VISION_MODEL_CURRENT", default_vision)),
-        "research": os.getenv("RESEARCH_MODEL_CURRENT",
-                             os.getenv("OPENAI_RESEARCH_MODEL_CURRENT", default_research)),
-        "stt": os.getenv("STT_MODEL_CURRENT",
-                        os.getenv("OPENAI_STT_MODEL_CURRENT", default_stt)),
-      },
-    }
+    # --- Load model profiles from JSON ---
+    self.model_profiles = self._load_profiles()
+    self.trace.debug(f"Loaded {len(self.model_profiles)} profiles from profiles.json")
 
     # Select starting profile
     # Try new variable name first, then fall back to legacy OPENAI_MODEL_PROFILE
@@ -211,6 +191,29 @@ class BaseCoreToolkit:
   #
   # --- Tool management / decorator integration ---
   #
+  def _load_profiles(self):
+    """Load model profiles from profiles.json file."""
+    profiles_path = os.path.join(os.path.dirname(__file__), "profiles.json")
+    try:
+      with open(profiles_path, "r") as f:
+        profiles_list = json.load(f)
+      
+      # Convert list to dict keyed by profile name
+      profiles = {}
+      for profile in profiles_list:
+        profile_name = profile.get("name", "").lower()
+        if not profile_name:
+          continue
+        profiles[profile_name] = profile.get("models", {})
+      
+      return profiles
+    except FileNotFoundError:
+      self.logger.warning(f"profiles.json not found at {profiles_path}, using empty profiles")
+      return {}
+    except json.JSONDecodeError as e:
+      self.logger.error(f"Failed to parse profiles.json: {e}")
+      return {}
+
   def toolspecBySrc(self, src, context=""):
     # Generates OpenAI tool specs from source code using the current backend
     client, _, _ = self._get_client_for_model(self.chat_model)
