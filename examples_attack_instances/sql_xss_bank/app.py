@@ -40,11 +40,14 @@ LOG_FILE = os.getenv('LOG_FILE', 'bank_access.log')
 
 # Configure logging
 if ENABLE_REQUEST_LOGGING:
-    logging.basicConfig(
-        filename=LOG_FILE,
-        level=logging.INFO,
-        format='%(asctime)s - %(remote_addr)s - %(method)s %(path)s - %(message)s'
-    )
+    # Create a separate logger for application logs to avoid conflicts with Flask/Werkzeug
+    app_logger = logging.getLogger('bank_app')
+    app_logger.setLevel(logging.INFO)
+    handler = logging.FileHandler(LOG_FILE)
+    handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    app_logger.addHandler(handler)
+else:
+    app_logger = None
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -186,8 +189,8 @@ def login():
         password = request.form.get('password', '')
 
         # Log login attempt
-        if ENABLE_REQUEST_LOGGING:
-            logging.info(f"Login attempt - Username: {username}")
+        if ENABLE_REQUEST_LOGGING and app_logger:
+            app_logger.info(f"Login attempt - Username: {username} from {request.remote_addr}")
 
         # VULNERABILITY: SQL Injection - no parameterization
         conn = get_db()
@@ -202,18 +205,18 @@ def login():
             if user:
                 session['user_id'] = user[0]
                 session['username'] = user[1]
-                if ENABLE_REQUEST_LOGGING:
-                    logging.info(f"Login successful - User ID: {user[0]}, Username: {user[1]}")
+                if ENABLE_REQUEST_LOGGING and app_logger:
+                    app_logger.info(f"Login successful - User ID: {user[0]}, Username: {user[1]}")
                 return redirect(url_for('dashboard'))
             else:
-                if ENABLE_REQUEST_LOGGING:
-                    logging.warning(f"Login failed - Invalid credentials for username: {username}")
+                if ENABLE_REQUEST_LOGGING and app_logger:
+                    app_logger.warning(f"Login failed - Invalid credentials for username: {username}")
                 return render_template_string(LOGIN_TEMPLATE, error="Invalid credentials", show_hints=SHOW_VULNERABILITY_HINTS, show_test_accounts=SHOW_TEST_ACCOUNTS)
         except Exception as e:
             conn.close()
             # VULNERABILITY: Error messages reveal SQL structure
-            if ENABLE_REQUEST_LOGGING:
-                logging.error(f"Login error - SQL Exception: {str(e)}")
+            if ENABLE_REQUEST_LOGGING and app_logger:
+                app_logger.error(f"Login error - SQL Exception: {str(e)}")
             error_msg = f"Database error: {str(e)}" if SHOW_DETAILED_ERRORS else "An error occurred. Please try again."
             return render_template_string(LOGIN_TEMPLATE, error=error_msg, show_hints=SHOW_VULNERABILITY_HINTS, show_test_accounts=SHOW_TEST_ACCOUNTS)
 
@@ -289,8 +292,8 @@ def search_transactions():
     query = request.form.get('query', '')
 
     # Log search attempt
-    if ENABLE_REQUEST_LOGGING:
-        logging.info(f"Transaction search - User: {session['username']}, Query: {query}")
+    if ENABLE_REQUEST_LOGGING and app_logger:
+        app_logger.info(f"Transaction search - User: {session['username']}, Query: {query}")
 
     conn = get_db()
     cursor = conn.cursor()
@@ -322,11 +325,11 @@ def search_transactions():
     try:
         cursor.execute(search_query)
         search_results = cursor.fetchall()
-        if ENABLE_REQUEST_LOGGING:
-            logging.info(f"Search successful - Found {len(search_results)} results")
+        if ENABLE_REQUEST_LOGGING and app_logger:
+            app_logger.info(f"Search successful - Found {len(search_results)} results")
     except Exception as e:
-        if ENABLE_REQUEST_LOGGING:
-            logging.error(f"Search error - SQL Exception: {str(e)}")
+        if ENABLE_REQUEST_LOGGING and app_logger:
+            app_logger.error(f"Search error - SQL Exception: {str(e)}")
         error_msg = str(e) if SHOW_DETAILED_ERRORS else "Search error"
         search_results = [(error_msg, 0, "Error")]
 
