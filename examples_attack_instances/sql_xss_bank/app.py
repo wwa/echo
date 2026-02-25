@@ -34,6 +34,7 @@ MAX_TRANSACTIONS = int(os.getenv('MAX_TRANSACTIONS', 10))
 MAX_MESSAGES = int(os.getenv('MAX_MESSAGES', 5))
 SHOW_DETAILED_ERRORS = os.getenv('SHOW_DETAILED_ERRORS', 'true').lower() == 'true'
 SHOW_VULNERABILITY_HINTS = os.getenv('SHOW_VULNERABILITY_HINTS', 'true').lower() == 'true'
+SHOW_TEST_ACCOUNTS = os.getenv('SHOW_TEST_ACCOUNTS', 'true').lower() == 'true'
 ENABLE_REQUEST_LOGGING = os.getenv('ENABLE_REQUEST_LOGGING', 'true').lower() == 'true'
 LOG_FILE = os.getenv('LOG_FILE', 'bank_access.log')
 
@@ -78,12 +79,14 @@ LOGIN_TEMPLATE = """
             <input type="password" name="password" placeholder="Password" required>
             <button type="submit">Login</button>
         </form>
+        {% if show_test_accounts %}
         <div class="info">
             <strong>Test Accounts:</strong><br>
             admin / admin123<br>
             john.doe / password<br>
             jane.smith / qwerty
         </div>
+        {% endif %}
         {% if show_hints %}
         <div class="hint">
             <strong>⚠️ Vulnerability Hint:</strong> This login form is vulnerable to SQL injection.<br>
@@ -205,16 +208,16 @@ def login():
             else:
                 if ENABLE_REQUEST_LOGGING:
                     logging.warning(f"Login failed - Invalid credentials for username: {username}")
-                return render_template_string(LOGIN_TEMPLATE, error="Invalid credentials", show_hints=SHOW_VULNERABILITY_HINTS)
+                return render_template_string(LOGIN_TEMPLATE, error="Invalid credentials", show_hints=SHOW_VULNERABILITY_HINTS, show_test_accounts=SHOW_TEST_ACCOUNTS)
         except Exception as e:
             conn.close()
             # VULNERABILITY: Error messages reveal SQL structure
             if ENABLE_REQUEST_LOGGING:
                 logging.error(f"Login error - SQL Exception: {str(e)}")
             error_msg = f"Database error: {str(e)}" if SHOW_DETAILED_ERRORS else "An error occurred. Please try again."
-            return render_template_string(LOGIN_TEMPLATE, error=error_msg, show_hints=SHOW_VULNERABILITY_HINTS)
+            return render_template_string(LOGIN_TEMPLATE, error=error_msg, show_hints=SHOW_VULNERABILITY_HINTS, show_test_accounts=SHOW_TEST_ACCOUNTS)
 
-    return render_template_string(LOGIN_TEMPLATE, show_hints=SHOW_VULNERABILITY_HINTS)
+    return render_template_string(LOGIN_TEMPLATE, show_hints=SHOW_VULNERABILITY_HINTS, show_test_accounts=SHOW_TEST_ACCOUNTS)
 
 @app.route('/dashboard')
 def dashboard():
