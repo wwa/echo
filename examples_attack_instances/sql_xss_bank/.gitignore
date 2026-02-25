@@ -1,0 +1,19 @@
+# Virtual Environment
+venv/
+__pycache__/
+*.pyc
+
+# Environment Configuration
+.env
+
+# Database
+bank.db
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
