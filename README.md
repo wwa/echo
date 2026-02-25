@@ -33,16 +33,24 @@ Install dependencies:
 
 ## How to Run & Install
 
-### 1. Create and activate virtual environment
+### Option 1: Classic Installation
+
+#### 1. Create and activate virtual environment
 
     python -m venv vEcho
     source vEcho/bin/activate
 
-### 2. Configure environment
+#### 2. Install dependencies
+
+    pip install -r requirements.txt
+
+#### 3. Configure environment
 
     cp .env.example .env
 
-### 3. Start ECHO
+Edit `.env` file and configure your API keys and providers (see Configuration section below).
+
+#### 4. Start ECHO
 
 Recommended:
 
@@ -51,6 +59,160 @@ Recommended:
 Manual:
 
     python Echo.py
+
+### Option 2: Docker Installation
+
+#### 1. Configure environment
+
+    cp .env.example .env
+
+Edit `.env` file and configure your API keys and providers (see Configuration section below).
+
+#### 2. Build and run with Docker Compose
+
+    cd docker
+    docker-compose up --build
+
+The container will automatically start with:
+- Virtual display (Xvfb) for visual perception features
+- Persistent volumes for data and logs
+- Interactive TTY for CLI interaction
+
+#### 3. Stop the container
+
+    docker-compose down
+
+## Configuration
+
+### Configuring Providers
+
+ECHO supports multiple LLM providers (OpenAI, Anthropic, Google, DeepSeek, etc.). Providers are configured in the `.env` file using the `LLM_PROVIDERS` JSON array.
+
+Each provider entry requires:
+- `providerName`: Unique identifier (e.g., "openai", "anthropic")
+- `endpoint`: API endpoint URL
+- `apiKey`: Your API authentication key
+- `desc`: Description of the provider
+- `name`: Display name for the UI
+
+Example provider configuration:
+
+```json
+LLM_PROVIDERS='[
+  {
+    "providerName": "openai",
+    "endpoint": "https://api.openai.com/v1/",
+    "apiKey": "your-api-key-here",
+    "desc": "OpenAI Official API",
+    "name": "OpenAI"
+  },
+  {
+    "providerName": "anthropic",
+    "endpoint": "https://api.anthropic.com/v1/",
+    "apiKey": "your-api-key-here",
+    "desc": "Anthropic Claude API",
+    "name": "Anthropic"
+  }
+]'
+```
+
+### Configuring Models
+
+Models are mapped to providers using the `MODEL_PROVIDER_MAP` in `.env`. This allows using the same model from different providers with unique identifiers.
+
+Each model entry requires:
+- `modelName`: Actual model name used in API calls
+- `providerName`: Must match a provider from `LLM_PROVIDERS`
+- `modelIdentifier`: Unique alias for referencing the model
+
+Optional fields:
+- `supportsToolChoice`: Set to `false` if model doesn't support automatic tool calling
+- `assistantsToolChoiceOverride`: Override tool_choice for Assistants API ("none", "auto", "required")
+- `assistantsFallbackModel`: Use another model for tool routing decisions
+
+Example model configuration:
+
+```json
+MODEL_PROVIDER_MAP='[
+  {
+    "modelName": "gpt-5-mini",
+    "providerName": "openai",
+    "modelIdentifier": "openai-gpt5-mini"
+  },
+  {
+    "modelName": "claude-3-5-sonnet-20241022",
+    "providerName": "anthropic",
+    "modelIdentifier": "claude-sonnet-3.5"
+  }
+]'
+```
+
+### Configuring Model Profiles
+
+Model profiles define which models to use for different tasks (chat, vision, research, STT). Profiles are configured in `profiles.json`.
+
+Each profile contains:
+- `name`: Profile identifier
+- `desc`: Description
+- `isLegacy`: Whether this is a legacy profile
+- `models`: Object mapping task types to model identifiers
+
+Example profile:
+
+```json
+{
+  "name": "current",
+  "desc": "Use latest models from various providers",
+  "isLegacy": false,
+  "models": {
+    "chat": "openai-gpt5-mini",
+    "vision": "openai-gpt5",
+    "research": "openai-gpt5.2",
+    "stt": "openai-gpt4o-mini-transcribe"
+  }
+}
+```
+
+Set the active profile in `.env`:
+
+    MODEL_PROFILE=current
+
+Switch profiles at runtime using CLI:
+
+    profile <name>
+
+### Configuring Sequences
+
+Sequences allow you to automate command execution. They are configured in `sequences.json`.
+
+Each sequence contains:
+- `name`: Sequence identifier
+- `desc`: Description of what the sequence does
+- `autoExecute`: Whether to execute automatically (true/false)
+- `cmds`: Array of commands to execute in order
+
+Example sequence:
+
+```json
+{
+  "name": "example",
+  "desc": "Example vulnerability scan sequence",
+  "autoExecute": false,
+  "cmds": [
+    "profile current",
+    "listtools enabled",
+    "testcmd"
+  ]
+}
+```
+
+Execute a sequence using CLI:
+
+    sequence <name>
+
+Or execute directly:
+
+    execseq <name>
 
 ## Debug Features
 
