@@ -102,6 +102,7 @@ The application is configured via the `.env` file. All settings have sensible de
 | `MAX_MESSAGES` | `5` | Number of messages to display |
 | `SHOW_DETAILED_ERRORS` | `true` | Show SQL errors (for demonstration) |
 | `SHOW_VULNERABILITY_HINTS` | `true` | Display vulnerability hints in UI |
+| `SHOW_TEST_ACCOUNTS` | `true` | Display test account credentials in login form |
 
 ### Logging Configuration
 
@@ -110,14 +111,22 @@ The application is configured via the `.env` file. All settings have sensible de
 | `ENABLE_REQUEST_LOGGING` | `true` | Log all requests to file |
 | `LOG_FILE` | `bank_access.log` | Log file path |
 
-### Example Configuration
+### Example Configurations
 
-To run on a different port with hints disabled:
+**Run on a different port with hints disabled:**
 ```bash
 # Edit .env
 HOST=0.0.0.0
 PORT=8080
 SHOW_VULNERABILITY_HINTS=false
+```
+
+**Production-like mode (hide hints and test accounts):**
+```bash
+# Edit .env
+SHOW_VULNERABILITY_HINTS=false
+SHOW_TEST_ACCOUNTS=false
+SHOW_DETAILED_ERRORS=false
 ```
 
 ## Vulnerabilities & Test Payloads
